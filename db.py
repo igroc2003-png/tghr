@@ -17,6 +17,7 @@ def init_db():
             title TEXT NOT NULL,
             description TEXT NOT NULL,
             link TEXT NOT NULL,
+            image_id TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -35,13 +36,13 @@ def init_db():
     conn.close()
 
 
-def add_vacancy(title, description, link):
+def add_vacancy(title, description, link, image_id=None):
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        "INSERT INTO vacancies (title, description, link) VALUES (?, ?, ?)",
-        (title, description, link)
+        "INSERT INTO vacancies (title, description, link, image_id) VALUES (?, ?, ?, ?)",
+        (title, description, link, image_id)
     )
 
     conn.commit()
@@ -53,10 +54,10 @@ def get_all_vacancies():
     cursor = conn.cursor()
 
     cursor.execute("SELECT id, title FROM vacancies ORDER BY created_at DESC")
-    rows = cursor.fetchall()
+    data = cursor.fetchall()
 
     conn.close()
-    return rows
+    return data
 
 
 def get_vacancy_by_id(vacancy_id):
@@ -64,16 +65,16 @@ def get_vacancy_by_id(vacancy_id):
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT title, description, link FROM vacancies WHERE id = ?",
+        "SELECT title, description, link, image_id FROM vacancies WHERE id = ?",
         (vacancy_id,)
     )
+    data = cursor.fetchone()
 
-    row = cursor.fetchone()
     conn.close()
-    return row
+    return data
 
 
-def add_response(vacancy_id, user_id, username):
+def save_response(vacancy_id, user_id, username):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -84,27 +85,3 @@ def add_response(vacancy_id, user_id, username):
 
     conn.commit()
     conn.close()
-
-def get_all_vacancies():
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT id, title FROM vacancies")
-    rows = cursor.fetchall()
-
-    conn.close()
-    return rows
-
-
-def get_vacancy_by_id(vacancy_id):
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT title, description, link FROM vacancies WHERE id = ?",
-        (vacancy_id,)
-    )
-
-    row = cursor.fetchone()
-    conn.close()
-    return row
