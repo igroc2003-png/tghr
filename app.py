@@ -5,8 +5,8 @@ from aiogram.filters import CommandStart
 
 # ================= НАСТРОЙКИ =================
 
-BOT_TOKEN = "ВСТАВЬ_СЮДА_ТОКЕН_БОТА"
-HR_CHAT_ID = 123456789  # ВСТАВЬ СЮДА СВОЙ TELEGRAM ID (ЧИСЛОМ)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+HR_CHAT_ID = 5108587018  # ВСТАВЬ СЮДА СВОЙ TELEGRAM ID (ЧИСЛОМ)
 
 # ============================================
 
