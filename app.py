@@ -1,56 +1,77 @@
-import asyncio
 import os
+import asyncio
+import logging
 
+from flask import Flask, request
 from dotenv import load_dotenv
+
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+from aiogram.types import Update
+
 from openai import OpenAI
 
-# ================== LOAD ENV ==================
-load_dotenv()  # <-- ОБЯЗАТЕЛЬНО для .env
+
+# ================== ENV ==================
+load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан")
+
 if not OPENAI_API_KEY:
     raise RuntimeError("OPENAI_API_KEY не задан")
 
-# ================== INIT ==================
+# ================== LOGS ==================
+logging.basicConfig(level=logging.INFO)
+
+# ================== GPT (OpenRouter) ==================
+client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    base_url="https://openrouter.ai/api/v1",
+    default_headers={
+        "HTTP-Referer": "https://example.com",
+        "X-Title": "Telegram GPT Bot"
+    }
+)
+
+# ================== TELEGRAM ==================
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-SYSTEM_PROMPT = "Ты полезный Telegram-ассистент. Отвечай кратко и по делу."
-
-# ================== HANDLERS ==================
-@dp.message(CommandStart())
-async def start(message: types.Message):
-    await message.answer(
-        "🤖 GPT-бот запущен!\n\nНапиши любой вопрос — я отвечу."
-    )
 
 @dp.message()
-async def gpt_answer(message: types.Message):
-    await bot.send_chat_action(message.chat.id, "typing")
+async def handle_message(message: types.Message):
+    try:
+        completion = client.chat.completions.create(
+            model="openai/gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "Ты полезный Telegram-бот ассистент."},
+                {"role": "user", "content": message.text}
+            ]
+        )
 
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": message.text}
-        ],
-        temperature=0.7,
-        max_tokens=500
-    )
+        answer = completion.choices[0].message.content
+        await message.answer(answer)
 
-    answer = response.choices[0].message.content
-    await message.answer(answer)
+    except Exception as e:
+        logging.exception(e)
+        await message.answer("❌ Ошибка GPT")
+
+# ================== FLASK ==================
+app = Flask(__name__)
+
+@app.route("/", methods=["GET"])
+def index():
+    return "OK", 200
+
+@app.route("/webhook", methods=["POST"])
+def webhook():
+    update = Update.model_validate(request.json)
+    asyncio.run(dp.feed_update(bot, update))
+    return "OK", 200
 
 # ================== START ==================
-async def main():
-    await dp.start_polling(bot)
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    port = int(os.environ.get("PORT", 3000))
+    app.run(host="0.0.0.0", port=port)
