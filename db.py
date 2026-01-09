@@ -22,21 +22,11 @@ def init_db():
         )
     """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            vacancy_id INTEGER,
-            user_id INTEGER,
-            username TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
     conn.commit()
     conn.close()
 
 
-def add_vacancy(title, description, link, image_id=None):
+def add_vacancy(title, description, link, image_id):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -54,10 +44,10 @@ def get_all_vacancies():
     cursor = conn.cursor()
 
     cursor.execute("SELECT id, title FROM vacancies ORDER BY created_at DESC")
-    data = cursor.fetchall()
+    rows = cursor.fetchall()
 
     conn.close()
-    return data
+    return rows
 
 
 def get_vacancy_by_id(vacancy_id):
@@ -68,20 +58,30 @@ def get_vacancy_by_id(vacancy_id):
         "SELECT title, description, link, image_id FROM vacancies WHERE id = ?",
         (vacancy_id,)
     )
-    data = cursor.fetchone()
+    row = cursor.fetchone()
 
     conn.close()
-    return data
+    return row
 
 
-def save_response(vacancy_id, user_id, username):
+def update_vacancy(vacancy_id, title, description, link, image_id):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "INSERT INTO responses (vacancy_id, user_id, username) VALUES (?, ?, ?)",
-        (vacancy_id, user_id, username)
-    )
+    cursor.execute("""
+        UPDATE vacancies
+        SET title = ?, description = ?, link = ?, image_id = ?
+        WHERE id = ?
+    """, (title, description, link, image_id, vacancy_id))
 
+    conn.commit()
+    conn.close()
+
+
+def delete_vacancy(vacancy_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("DELETE FROM vacancies WHERE id = ?", (vacancy_id,))
     conn.commit()
     conn.close()
