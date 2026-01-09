@@ -1,7 +1,8 @@
+import os
 import asyncio
-import logging
+from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import CommandStart
+
 
 # ================= НАСТРОЙКИ =================
 
