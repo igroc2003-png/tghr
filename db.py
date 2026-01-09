@@ -84,3 +84,27 @@ def add_response(vacancy_id, user_id, username):
 
     conn.commit()
     conn.close()
+
+def get_all_vacancies():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, title FROM vacancies")
+    rows = cursor.fetchall()
+
+    conn.close()
+    return rows
+
+
+def get_vacancy_by_id(vacancy_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT title, description, link FROM vacancies WHERE id = ?",
+        (vacancy_id,)
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+    return row
