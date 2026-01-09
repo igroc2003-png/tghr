@@ -3,105 +3,74 @@ import logging
 import asyncio
 
 from flask import Flask, request
-from aiogram import Bot, Dispatcher, types
 
+from aiogram import Bot, Dispatcher
+from aiogram.types import Update, Message
+from aiogram.filters import CommandStart
 
-# ================= НАСТРОЙКИ =================
+# =========================
+# НАСТРОЙКИ
+# =========================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-HR_CHAT_ID = 5108587018  # ВСТАВЬ СЮДА СВОЙ TELEGRAM ID (ЧИСЛОМ)
+HR_CHAT_ID = 5108587018  # ТВОЙ TELEGRAM ID
+PORT = 3000
 
-# ============================================
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # например: https://bot_xxx.bothost.run/webhook
+
+# =========================
+# ПРОВЕРКИ
+# =========================
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
+
+if not WEBHOOK_URL:
+    raise RuntimeError("WEBHOOK_URL не задан в переменных окружения")
+
+# =========================
+# ИНИЦИАЛИЗАЦИЯ
+# =========================
 
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Хранилище состояний
-users = {}
+app = Flask(__name__)
 
-QUESTIONS = [
-    "Как тебя зовут?",
-    "Сколько тебе лет?",
-    "В каком ты городе?",
-    "Есть ли опыт работы? Если да — какой?",
-    "Оставь номер телефона или @username для связи"
-]
-
-# ================= HANDLERS =================
+# =========================
+# HANDLERS
+# =========================
 
 @dp.message(CommandStart())
-async def start(message: types.Message):
-    users[message.from_user.id] = {"step": 0, "answers": []}
-
-    kb = types.ReplyKeyboardMarkup(
-        keyboard=[[types.KeyboardButton(text="📋 Посмотреть вакансии")]],
-        resize_keyboard=True
-    )
-
-    await message.answer(
-        "Привет! 👋\n"
-        "Я HR-бот.\n"
-        "Помогу подобрать вакансию и передать заявку рекрутеру.",
-        reply_markup=kb
-    )
-
-
-@dp.message(lambda m: m.text == "📋 Посмотреть вакансии")
-async def vacancies(message: types.Message):
-    users[message.from_user.id] = {"step": 0, "answers": []}
-
-    await message.answer(
-        "📌 Актуальные вакансии:\n\n"
-        "1️⃣ Менеджер по продажам\n"
-        "2️⃣ Оператор чата\n"
-        "3️⃣ Помощник руководителя\n\n"
-        "Ответь на несколько вопросов 👇"
-    )
-
-    await message.answer(QUESTIONS[0])
-
+async def start_handler(message: Message):
+    await message.answer("👋 HR-бот запущен и работает!")
 
 @dp.message()
-async def interview(message: types.Message):
-    user_id = message.from_user.id
+async def echo_handler(message: Message):
+    await message.answer(f"Вы написали: {message.text}")
 
-    if user_id not in users:
-        return
+# =========================
+# WEBHOOK
+# =========================
 
-    step = users[user_id]["step"]
-    users[user_id]["answers"].append(message.text)
-    users[user_id]["step"] += 1
+@app.route(WEBHOOK_PATH, methods=["POST"])
+def telegram_webhook():
+    update = Update.model_validate(request.json)
+    asyncio.run(dp.feed_update(bot, update))
+    return "ok"
 
-    if users[user_id]["step"] < len(QUESTIONS):
-        await message.answer(QUESTIONS[users[user_id]["step"]])
-    else:
-        answers = users[user_id]["answers"]
+# =========================
+# STARTUP
+# =========================
 
-        text = (
-            "🆕 Новая заявка\n\n"
-            f"👤 Имя: {answers[0]}\n"
-            f"🎂 Возраст: {answers[1]}\n"
-            f"🏙 Город: {answers[2]}\n"
-            f"💼 Опыт: {answers[3]}\n"
-            f"📞 Контакт: {answers[4]}"
-        )
-
-        await bot.send_message(HR_CHAT_ID, text)
-
-        await message.answer(
-            "✅ Спасибо! Заявка отправлена рекрутеру.\n"
-            "Мы свяжемся с тобой в ближайшее время."
-        )
-
-        users.pop(user_id, None)
-
-# ================= START =================
-
-async def main():
-    logging.info("🤖 HR-бот запущен (polling)")
-    await dp.start_polling(bot)
+async def on_startup():
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(on_startup())
+    app.run(host="0.0.0.0", port=PORT)
