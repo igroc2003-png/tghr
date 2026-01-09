@@ -1,38 +1,22 @@
-import os
-import requests
-from flask import Flask, request
+import asyncio
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import CommandStart
 
-BOT_TOKEN = os.getenv("BOT_TOKEN") or "ВАШ_BOT_TOKEN"
-BOT_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+BOT_TOKEN = "НОВЫЙ_ТОКЕН"
 
-app = Flask(__name__)
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-@app.route("/", methods=["GET"])
-def index():
-    return "Bot is running!"
+@dp.message(CommandStart())
+async def start(message: types.Message):
+    await message.answer("Бот запущен и работает на bothost 🚀")
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
+@dp.message()
+async def echo(message: types.Message):
+    await message.answer(message.text)
 
-    if "message" in data:
-        chat_id = data["message"]["chat"]["id"]
-        text = data["message"].get("text", "")
-
-        if text == "/start":
-            send_message(chat_id, "Привет! Я простой Telegram-бот 🤖")
-        else:
-            send_message(chat_id, f"Ты написал: {text}")
-
-    return "ok"
-
-def send_message(chat_id, text):
-    url = f"{BOT_URL}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text
-    }
-    requests.post(url, json=payload)
+async def main():
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=3000)
+    asyncio.run(main())
