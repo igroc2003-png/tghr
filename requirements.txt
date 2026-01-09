@@ -1,4 +1,3 @@
-flask
 aiogram
 python-dotenv
 openai
