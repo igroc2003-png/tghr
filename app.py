@@ -1,25 +1,23 @@
-import asyncio
-import logging
 import os
+import logging
+import asyncio
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InlineKeyboardButton
 )
+from aiogram.filters import CommandStart
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from db import (
-    init_db,
-    add_vacancy,
-    get_all_vacancies,
-    get_vacancy_by_id,
-    update_vacancy,
-    delete_vacancy
+    init_db, add_vacancy, get_all_vacancies,
+    get_vacancy_by_id, update_vacancy, delete_vacancy
 )
+
+# ================== НАСТРОЙКИ ==================
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 HR_CHAT_ID = 5108587018  # твой Telegram ID
@@ -30,10 +28,9 @@ if not BOT_TOKEN:
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
-
-# ================= FSM =================
+# ================== FSM ==================
 
 class AddVacancy(StatesGroup):
     photo = State()
@@ -49,88 +46,149 @@ class EditVacancy(StatesGroup):
     description = State()
     link = State()
 
+# ================== КЛАВИАТУРЫ ==================
 
-# ================= КНОПКИ =================
-
-def main_keyboard(user_id):
-    keyboard = []
-
-    for vid, title in get_all_vacancies():
-        keyboard.append([
-            InlineKeyboardButton(text=title, callback_data=f"vacancy:{vid}")
-        ])
+def main_keyboard(user_id: int):
+    keyboard = [[
+        InlineKeyboardButton(text="📋 Вакансии", callback_data="vacancies")
+    ]]
 
     if user_id == HR_CHAT_ID:
         keyboard.append([
-            InlineKeyboardButton("🛠 Админ-панель", callback_data="admin")
+            InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin")
         ])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def admin_panel_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton("➕ Добавить вакансию", callback_data="admin_add")],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
-        ]
-    )
+def admin_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="admin_add")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")]
+    ])
 
 
-def admin_vacancy_keyboard(vacancy_id):
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton("✏️ Редактировать", callback_data=f"edit:{vacancy_id}"),
-                InlineKeyboardButton("🗑 Удалить", callback_data=f"delete:{vacancy_id}")
-            ],
-            [InlineKeyboardButton("⬅️ Назад", callback_data="back")]
-        ]
-    )
+def vacancies_keyboard(admin=False):
+    keyboard = []
+
+    for vid, title in get_all_vacancies():
+        keyboard.append([
+            InlineKeyboardButton(
+                text=title,
+                callback_data=f"vacancy:{vid}"
+            )
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="back")
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
-def user_vacancy_keyboard():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton("⬅️ Назад", callback_data="back")]]
-    )
+def vacancy_admin_keyboard(vacancy_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit:{vacancy_id}"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{vacancy_id}")
+        ],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")]
+    ])
 
+# ================== START ==================
 
-# ================= START =================
-
-@dp.message(F.text == "/start")
+@dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
-        "📋 Актуальные вакансии:",
+        "👋 Добро пожаловать в HR-бот",
         reply_markup=main_keyboard(message.from_user.id)
     )
 
+# ================== НАВИГАЦИЯ ==================
 
-# ================= АДМИН-ПАНЕЛЬ =================
+@dp.callback_query(F.data == "back")
+async def back(callback: CallbackQuery):
+    await callback.message.answer(
+        "Главное меню",
+        reply_markup=main_keyboard(callback.from_user.id)
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "vacancies")
+async def show_vacancies(callback: CallbackQuery):
+    await callback.message.answer(
+        "📋 Список вакансий:",
+        reply_markup=vacancies_keyboard()
+    )
+    await callback.answer()
+
+# ================== ВАКАНСИЯ ==================
+
+@dp.callback_query(F.data.startswith("vacancy:"))
+async def show_vacancy(callback: CallbackQuery):
+    vacancy_id = int(callback.data.split(":")[1])
+    data = get_vacancy_by_id(vacancy_id)
+
+    if not data:
+        await callback.answer("Вакансия не найдена")
+        return
+
+    title, description, link, image_id = data
+
+    text = f"📌 <b>{title}</b>\n\n{description}\n\n🔗 {link}"
+
+    if image_id:
+        await callback.message.answer_photo(
+            photo=image_id,
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=vacancy_admin_keyboard(vacancy_id)
+            if callback.from_user.id == HR_CHAT_ID else None
+        )
+    else:
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=vacancy_admin_keyboard(vacancy_id)
+            if callback.from_user.id == HR_CHAT_ID else None
+        )
+
+    await callback.answer()
+
+# ================== АДМИН ==================
 
 @dp.callback_query(F.data == "admin")
 async def admin_panel(callback: CallbackQuery):
     if callback.from_user.id != HR_CHAT_ID:
+        await callback.answer("⛔ Нет доступа")
         return
 
     await callback.message.answer(
         "🛠 Админ-панель",
-        reply_markup=admin_panel_keyboard()
+        reply_markup=admin_keyboard()
     )
     await callback.answer()
 
-
-# ================= ДОБАВИТЬ =================
+# ================== ДОБАВЛЕНИЕ ==================
 
 @dp.callback_query(F.data == "admin_add")
 async def admin_add(callback: CallbackQuery, state: FSMContext):
-    await callback.message.answer("📸 Отправь картинку вакансии")
+    await callback.message.answer("📸 Отправь картинку или `-`")
     await state.set_state(AddVacancy.photo)
     await callback.answer()
 
 
-@dp.message(AddVacancy.photo, F.photo)
+@dp.message(AddVacancy.photo)
 async def add_photo(message: Message, state: FSMContext):
-    await state.update_data(image_id=message.photo[-1].file_id)
+    if message.text == "-":
+        await state.update_data(image_id=None)
+    elif message.photo:
+        await state.update_data(image_id=message.photo[-1].file_id)
+    else:
+        await message.answer("Отправь фото или `-`")
+        return
+
     await message.answer("✏️ Название вакансии")
     await state.set_state(AddVacancy.title)
 
@@ -138,7 +196,7 @@ async def add_photo(message: Message, state: FSMContext):
 @dp.message(AddVacancy.title)
 async def add_title(message: Message, state: FSMContext):
     await state.update_data(title=message.text)
-    await message.answer("📝 Описание вакансии")
+    await message.answer("📝 Описание")
     await state.set_state(AddVacancy.description)
 
 
@@ -157,55 +215,18 @@ async def add_link(message: Message, state: FSMContext):
         data["title"],
         data["description"],
         message.text,
-        data["image_id"]
+        data.get("image_id")
     )
 
     await message.answer("✅ Вакансия добавлена")
     await state.clear()
 
-
-# ================= ПОКАЗ =================
-
-@dp.callback_query(F.data.startswith("vacancy:"))
-async def show_vacancy(callback: CallbackQuery):
-    vacancy_id = int(callback.data.split(":")[1])
-    data = get_vacancy_by_id(vacancy_id)
-
-    if not data:
-        await callback.answer("Не найдено")
-        return
-
-    title, description, link, image_id = data
-    text = f"<b>{title}</b>\n\n{description}\n\n🔗 {link}"
-
-    keyboard = (
-        admin_vacancy_keyboard(vacancy_id)
-        if callback.from_user.id == HR_CHAT_ID
-        else user_vacancy_keyboard()
-    )
-
-    if image_id:
-        await callback.message.answer_photo(
-            photo=image_id,
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-    else:
-        await callback.message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=keyboard
-        )
-
-    await callback.answer()
-
-
-# ================= УДАЛИТЬ =================
+# ================== УДАЛЕНИЕ ==================
 
 @dp.callback_query(F.data.startswith("delete:"))
 async def delete_vac(callback: CallbackQuery):
     if callback.from_user.id != HR_CHAT_ID:
+        await callback.answer("⛔ Нет доступа")
         return
 
     vacancy_id = int(callback.data.split(":")[1])
@@ -214,19 +235,7 @@ async def delete_vac(callback: CallbackQuery):
     await callback.message.answer("🗑 Вакансия удалена")
     await callback.answer()
 
-
-# ================= НАЗАД =================
-
-@dp.callback_query(F.data == "back")
-async def back(callback: CallbackQuery):
-    await callback.message.answer(
-        "📋 Актуальные вакансии:",
-        reply_markup=main_keyboard(callback.from_user.id)
-    )
-    await callback.answer()
-
-
-# ================= RUN =================
+# ================== MAIN ==================
 
 async def main():
     init_db()
