@@ -33,3 +33,54 @@ def init_db():
 
     conn.commit()
     conn.close()
+
+
+def add_vacancy(title, description, link):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO vacancies (title, description, link) VALUES (?, ?, ?)",
+        (title, description, link)
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_all_vacancies():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, title FROM vacancies ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+
+    conn.close()
+    return rows
+
+
+def get_vacancy_by_id(vacancy_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT title, description, link FROM vacancies WHERE id = ?",
+        (vacancy_id,)
+    )
+
+    row = cursor.fetchone()
+    conn.close()
+    return row
+
+
+def add_response(vacancy_id, user_id, username):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT INTO responses (vacancy_id, user_id, username) VALUES (?, ?, ?)",
+        (vacancy_id, user_id, username)
+    )
+
+    conn.commit()
+    conn.close()
