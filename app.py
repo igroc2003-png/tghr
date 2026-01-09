@@ -10,7 +10,8 @@ from db import (
     init_db,
     get_all_vacancies,
     get_vacancy_by_id,
-    add_vacancy
+    add_vacancy,
+    get_connection
 )
 
 # ================= НАСТРОЙКИ =================
@@ -21,7 +22,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан")
 
-ADMIN_ID = 5108587018  # 🔴 ВСТАВЬ СЮДА СВОЙ TELEGRAM ID
+ADMIN_ID = 5108587018  # ❗ ВСТАВЬ СВОЙ TELEGRAM ID (числом)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
@@ -33,11 +34,13 @@ def vacancies_keyboard():
 
     vacancies = get_all_vacancies()
     if not vacancies:
-        return InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="❌ Вакансий нет", callback_data="empty")]
-            ]
-        )
+        keyboard.append([
+            InlineKeyboardButton(
+                text="❌ Вакансий пока нет",
+                callback_data="empty"
+            )
+        ])
+        return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
     for vid, title in vacancies:
         keyboard.append([
@@ -82,7 +85,6 @@ async def show_vacancy(callback):
 async def empty_callback(callback):
     await callback.answer("Пока вакансий нет")
 
-
 # ================= АДМИН-КОМАНДЫ =================
 
 @dp.message(Command("add"))
@@ -93,11 +95,11 @@ async def add_command(message: Message):
 
     text = message.text.strip()
 
-    # Если просто /add — показываем инструкцию
+    # Только /add → инструкция
     if text == "/add":
         await message.answer(
             "✍️ Добавление вакансии\n\n"
-            "Формат:\n"
+            "Отправь ОДНИМ сообщением:\n\n"
             "<code>/add\n"
             "Название\n"
             "Описание\n"
@@ -106,7 +108,7 @@ async def add_command(message: Message):
         )
         return
 
-    # Если /add с данными — добавляем
+    # /add с данными
     parts = text.split("\n", 3)
     if len(parts) < 4:
         await message.answer("❌ Неверный формат")
@@ -123,63 +125,42 @@ async def add_command(message: Message):
     await message.answer("✅ Вакансия добавлена")
 
 
-
-
 @dp.message(Command("delete"))
 async def delete_command(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.answer("⛔ У тебя нет доступа")
         return
 
-    vacancies = get_all_vacancies()
-    if not vacancies:
-        await message.answer("Вакансий нет")
+    parts = message.text.split()
+
+    # Просто /delete → показать список
+    if len(parts) == 1:
+        vacancies = get_all_vacancies()
+        if not vacancies:
+            await message.answer("Вакансий нет")
+            return
+
+        text = "🗑 Удаление вакансии\n\nОтправь:\n<code>/delete ID</code>\n\nСписок:\n"
+        for vid, title in vacancies:
+            text += f"{vid} — {title}\n"
+
+        await message.answer(text, parse_mode="HTML")
         return
 
-    text = "🗑 Удаление вакансии\n\nОтправь:\n<code>/delete ID</code>\n\nСписок:\n"
-    for vid, title in vacancies:
-        text += f"{vid} — {title}\n"
-
-    await message.answer(text, parse_mode="HTML")
-
-
-@dp.message(F.text.startswith("/add\n"))
-async def process_add(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
-    parts = message.text.split("\n", 3)
-    if len(parts) < 4:
-        await message.answer("❌ Неверный формат")
-        return
-
-    _, title, description, link = parts
-    add_vacancy(title.strip(), description.strip(), link.strip())
-
-    await message.answer("✅ Вакансия добавлена")
-
-
-@dp.message(F.text.startswith("/delete "))
-async def process_delete(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return
-
+    # /delete ID
     try:
-        vacancy_id = int(message.text.split()[1])
+        vacancy_id = int(parts[1])
     except ValueError:
-        await message.answer("❌ Укажи ID числом")
+        await message.answer("❌ ID должен быть числом")
         return
 
-    from db import get_connection
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute("DELETE FROM vacancies WHERE id = ?", (vacancy_id,))
     conn.commit()
     conn.close()
 
     await message.answer("🗑 Вакансия удалена")
-
 
 # ================= ЗАПУСК =================
 
