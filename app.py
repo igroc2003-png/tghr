@@ -91,15 +91,38 @@ async def add_command(message: Message):
         await message.answer("⛔ У тебя нет доступа")
         return
 
-    await message.answer(
-        "✍️ Добавление вакансии\n\n"
-        "Формат:\n"
-        "<code>/add\n"
-        "Название\n"
-        "Описание\n"
-        "Ссылка</code>",
-        parse_mode="HTML"
+    text = message.text.strip()
+
+    # Если просто /add — показываем инструкцию
+    if text == "/add":
+        await message.answer(
+            "✍️ Добавление вакансии\n\n"
+            "Формат:\n"
+            "<code>/add\n"
+            "Название\n"
+            "Описание\n"
+            "Ссылка</code>",
+            parse_mode="HTML"
+        )
+        return
+
+    # Если /add с данными — добавляем
+    parts = text.split("\n", 3)
+    if len(parts) < 4:
+        await message.answer("❌ Неверный формат")
+        return
+
+    _, title, description, link = parts
+
+    add_vacancy(
+        title.strip(),
+        description.strip(),
+        link.strip()
     )
+
+    await message.answer("✅ Вакансия добавлена")
+
+
 
 
 @dp.message(Command("delete"))
