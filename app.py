@@ -2,11 +2,8 @@ import os
 import asyncio
 import logging
 
-from flask import Flask, request
 from dotenv import load_dotenv
-
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Update
 
 from openai import OpenAI
 
@@ -58,20 +55,10 @@ async def handle_message(message: types.Message):
         logging.exception(e)
         await message.answer("❌ Ошибка GPT")
 
-# ================== FLASK ==================
-app = Flask(__name__)
-
-@app.route("/", methods=["GET"])
-def index():
-    return "OK", 200
-
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    update = Update.model_validate(request.json)
-    asyncio.run(dp.feed_update(bot, update))
-    return "OK", 200
-
 # ================== START ==================
+async def main():
+    logging.info("🤖 Бот запущен (polling)")
+    await dp.start_polling(bot)
+
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 3000))
-    app.run(host="0.0.0.0", port=port)
+    asyncio.run(main())
