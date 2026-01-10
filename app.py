@@ -162,41 +162,6 @@ async def add_link(m: Message, s: FSMContext):
     await m.answer("✅ Вакансия добавлена", reply_markup=admin_kb())
 
 
-# ---------- EDIT ----------
-
-@dp.callback_query(F.data.startswith("edit:"))
-async def edit_start(c: CallbackQuery, s: FSMContext):
-    v_id = int(c.data.split(":")[1])
-    v = get_vacancy(v_id)
-    await s.clear()
-    await s.update_data(vid=v_id)
-    await s.set_state(EditVacancyFSM.title)
-    await c.message.answer(f"Новое название:\n(было: {v[0]})")
-    await c.answer()
-
-
-@dp.message(EditVacancyFSM.title)
-async def edit_title(m: Message, s: FSMContext):
-    await s.update_data(title=m.text)
-    await s.set_state(EditVacancyFSM.desc)
-    await m.answer("Новое описание:")
-
-
-@dp.message(EditVacancyFSM.desc)
-async def edit_desc(m: Message, s: FSMContext):
-    await s.update_data(desc=m.text)
-    await s.set_state(EditVacancyFSM.link)
-    await m.answer("Новая ссылка:")
-
-
-@dp.message(EditVacancyFSM.link)
-async def edit_link(m: Message, s: FSMContext):
-    d = await s.get_data()
-    update_vacancy(d["vid"], d["title"], d["desc"], m.text)
-    await s.clear()
-    await m.answer("✏️ Вакансия обновлена", reply_markup=admin_kb())
-
-
 # ---------- DELETE ----------
 
 @dp.callback_query(F.data.startswith("del:"))
@@ -210,7 +175,7 @@ async def delete_ask(c: CallbackQuery):
 
 @dp.callback_query(F.data.startswith("confirm:"))
 async def delete_confirm(c: CallbackQuery):
-    delete_vacancy(int(c.data.split(":")[1]))  # ← ИСПРАВЛЕНО
+    delete_vacancy(int(c.data.split(":")[1]))
     await c.message.answer("🗑 Удалено", reply_markup=admin_kb())
     await c.answer()
 
@@ -231,8 +196,21 @@ async def stats(c: CallbackQuery):
     await c.answer()
 
 
-# ---------- TOGGLE ----------
+# ---------- TOGGLE (ИСПРАВЛЕНО) ----------
 
 @dp.callback_query(F.data == "toggle")
 async def toggle(c: CallbackQuery):
-    toggle
+    toggle_notifications()
+    await c.message.answer("⚙️ Настройки уведомлений обновлены", reply_markup=admin_kb())
+    await c.answer()
+
+
+# ---------- RUN ----------
+
+async def main():
+    init_db()
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
