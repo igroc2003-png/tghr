@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, date
 
 DB_NAME = "hr_bot.db"
 
@@ -21,9 +22,51 @@ def init_db():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            joined_at TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()
 
+
+# ================== USERS ==================
+
+def add_user(user_id: int):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (user_id, joined_at) VALUES (?, ?)",
+        (user_id, datetime.now().isoformat())
+    )
+
+    conn.commit()
+    conn.close()
+
+
+def get_users_stats():
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total = cursor.fetchone()[0]
+
+    today = date.today().isoformat()
+    cursor.execute(
+        "SELECT COUNT(*) FROM users WHERE joined_at LIKE ?",
+        (f"{today}%",)
+    )
+    today_count = cursor.fetchone()[0]
+
+    conn.close()
+    return total, today_count
+
+
+# ================== VACANCIES ==================
 
 def add_vacancy(title, description, link, image_id=None):
     conn = get_connection()
