@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 DB_NAME = "hr_bot.db"
 
@@ -48,7 +48,7 @@ def add_user(user_id: int):
     conn.close()
 
 
-def get_users_stats():
+def get_users_stats_extended():
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -62,8 +62,22 @@ def get_users_stats():
     )
     today_count = cursor.fetchone()[0]
 
+    week_date = (date.today() - timedelta(days=7)).isoformat()
+    cursor.execute(
+        "SELECT COUNT(*) FROM users WHERE joined_at >= ?",
+        (week_date,)
+    )
+    week_count = cursor.fetchone()[0]
+
+    month_date = (date.today() - timedelta(days=30)).isoformat()
+    cursor.execute(
+        "SELECT COUNT(*) FROM users WHERE joined_at >= ?",
+        (month_date,)
+    )
+    month_count = cursor.fetchone()[0]
+
     conn.close()
-    return total, today_count
+    return total, today_count, week_count, month_count
 
 
 # ================== VACANCIES ==================
