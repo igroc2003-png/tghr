@@ -45,26 +45,21 @@ def init_db():
     conn.close()
 
 
-# ================== USERS ==================
+# ---------- USERS ----------
 
 def add_user(user_id: int) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(
-        "SELECT 1 FROM users WHERE user_id = ?",
-        (user_id,)
-    )
-
+    cursor.execute("SELECT 1 FROM users WHERE user_id=?", (user_id,))
     if cursor.fetchone():
         conn.close()
         return False
 
     cursor.execute(
-        "INSERT INTO users (user_id, joined_at) VALUES (?, ?)",
+        "INSERT INTO users VALUES (?, ?)",
         (user_id, datetime.utcnow().isoformat())
     )
-
     conn.commit()
     conn.close()
     return True
@@ -82,39 +77,26 @@ def get_users_stats():
     cursor.execute("SELECT COUNT(*) FROM users")
     total = cursor.fetchone()[0]
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE date(joined_at) = ?",
-        (today,)
-    )
+    cursor.execute("SELECT COUNT(*) FROM users WHERE date(joined_at)=?", (today,))
     today_count = cursor.fetchone()[0]
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE joined_at >= ?",
-        (week,)
-    )
+    cursor.execute("SELECT COUNT(*) FROM users WHERE joined_at>=?", (week,))
     week_count = cursor.fetchone()[0]
 
-    cursor.execute(
-        "SELECT COUNT(*) FROM users WHERE joined_at >= ?",
-        (month,)
-    )
+    cursor.execute("SELECT COUNT(*) FROM users WHERE joined_at>=?", (month,))
     month_count = cursor.fetchone()[0]
 
     conn.close()
     return total, today_count, week_count, month_count
 
 
-# ================== SETTINGS ==================
+# ---------- SETTINGS ----------
 
-def notifications_enabled() -> bool:
+def notifications_enabled():
     conn = get_connection()
     cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT value FROM settings WHERE key = 'notifications'"
-    )
+    cursor.execute("SELECT value FROM settings WHERE key='notifications'")
     value = cursor.fetchone()[0]
-
     conn.close()
     return value == "1"
 
@@ -122,31 +104,36 @@ def notifications_enabled() -> bool:
 def toggle_notifications():
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute("""
         UPDATE settings
-        SET value = CASE value
-            WHEN '1' THEN '0'
-            ELSE '1'
-        END
-        WHERE key = 'notifications'
+        SET value = CASE value WHEN '1' THEN '0' ELSE '1' END
+        WHERE key='notifications'
     """)
-
     conn.commit()
     conn.close()
 
 
-# ================== VACANCIES ==================
+# ---------- VACANCIES ----------
 
 def add_vacancy(title, description, link, image_id=None):
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute(
         "INSERT INTO vacancies (title, description, link, image_id) VALUES (?, ?, ?, ?)",
         (title, description, link, image_id)
     )
+    conn.commit()
+    conn.close()
 
+
+def update_vacancy(vacancy_id, title, description, link, image_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE vacancies
+        SET title=?, description=?, link=?, image_id=?
+        WHERE id=?
+    """, (title, description, link, image_id, vacancy_id))
     conn.commit()
     conn.close()
 
@@ -154,12 +141,8 @@ def add_vacancy(title, description, link, image_id=None):
 def get_all_vacancies():
     conn = get_connection()
     cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT id, title FROM vacancies ORDER BY id DESC"
-    )
+    cursor.execute("SELECT id, title FROM vacancies ORDER BY id DESC")
     rows = cursor.fetchall()
-
     conn.close()
     return rows
 
@@ -167,13 +150,11 @@ def get_all_vacancies():
 def get_vacancy_by_id(vacancy_id):
     conn = get_connection()
     cursor = conn.cursor()
-
     cursor.execute(
-        "SELECT title, description, link, image_id FROM vacancies WHERE id = ?",
+        "SELECT title, description, link, image_id FROM vacancies WHERE id=?",
         (vacancy_id,)
     )
     row = cursor.fetchone()
-
     conn.close()
     return row
 
@@ -181,11 +162,6 @@ def get_vacancy_by_id(vacancy_id):
 def delete_vacancy(vacancy_id):
     conn = get_connection()
     cursor = conn.cursor()
-
-    cursor.execute(
-        "DELETE FROM vacancies WHERE id = ?",
-        (vacancy_id,)
-    )
-
+    cursor.execute("DELETE FROM vacancies WHERE id=?", (vacancy_id,))
     conn.commit()
     conn.close()
