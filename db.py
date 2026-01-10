@@ -17,8 +17,7 @@ def init_db():
             title TEXT NOT NULL,
             description TEXT NOT NULL,
             link TEXT NOT NULL,
-            image_id TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            image_id TEXT
         )
     """)
 
@@ -26,7 +25,7 @@ def init_db():
     conn.close()
 
 
-def add_vacancy(title, description, link, image_id):
+def add_vacancy(title, description, link, image_id=None):
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -43,7 +42,7 @@ def get_all_vacancies():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, title FROM vacancies ORDER BY created_at DESC")
+    cursor.execute("SELECT id, title FROM vacancies ORDER BY id DESC")
     rows = cursor.fetchall()
 
     conn.close()
