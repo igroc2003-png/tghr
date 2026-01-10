@@ -1,164 +1,242 @@
-import os
 import asyncio
+import os
 import logging
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message, CallbackQuery,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from db import (
-    init_db,
-    get_all_vacancies,
-    get_vacancy,
-    delete_vacancy,
-    add_user
-)
+from db import *
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = 5108587018
 
 logging.basicConfig(level=logging.INFO)
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ================= КЛАВИАТУРЫ =================
 
-def main_keyboard(uid):
+# ---------- FSM ----------
+
+class AddVacancyFSM(StatesGroup):
+    title = State()
+    desc = State()
+    link = State()
+
+
+class EditVacancyFSM(StatesGroup):
+    vid = State()
+    title = State()
+    desc = State()
+    link = State()
+
+
+# ---------- KEYBOARDS ----------
+
+def main_kb(uid):
     kb = [[InlineKeyboardButton(text="📋 Вакансии", callback_data="vacancies")]]
     if uid == ADMIN_ID:
         kb.append([InlineKeyboardButton(text="🛠 Админ-панель", callback_data="admin")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
-def vacancies_keyboard():
-    kb = []
-    for vid, title in get_all_vacancies():
-        kb.append([
-            InlineKeyboardButton(text=title, callback_data=f"vacancy:{vid}")
-        ])
-    kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
-
-
-def vacancy_admin_keyboard(vacancy_id):
+def admin_kb():
+    notif = "🔔 ВКЛ" if notifications_enabled() else "🔕 ВЫКЛ"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit:{vacancy_id}"),
-            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete:{vacancy_id}")
-        ],
+        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="add")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton(text=f"Уведомления {notif}", callback_data="toggle")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")]
     ])
 
 
-def confirm_delete_keyboard(vacancy_id):
+def vacancies_kb():
+    kb = [[InlineKeyboardButton(text=t, callback_data=f"vac:{i}")] for i, t in all_vacancies()]
+    kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def vacancy_admin_kb(v_id):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(
-                text="✅ Да, удалить",
-                callback_data=f"confirm_delete:{vacancy_id}"
-            ),
-            InlineKeyboardButton(
-                text="❌ Отмена",
-                callback_data="cancel_delete"
-            )
+            InlineKeyboardButton(text="✏️ Редактировать", callback_data=f"edit:{v_id}"),
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del:{v_id}")
         ]
     ])
 
-# ================= START =================
+
+def confirm_kb(v_id):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="✅ Да", callback_data=f"confirm:{v_id}"),
+            InlineKeyboardButton(text="❌ Нет", callback_data="admin")
+        ]
+    ])
+
+
+# ---------- START ----------
 
 @dp.message(CommandStart())
-async def start(message: Message):
-    add_user(message.from_user.id)
-    await message.answer("👋 Добро пожаловать", reply_markup=main_keyboard(message.from_user.id))
+async def start(m: Message):
+    add_user(m.from_user.id)
+    await m.answer("👋 Добро пожаловать", reply_markup=main_kb(m.from_user.id))
 
-# ================= НАВИГАЦИЯ =================
 
-@dp.callback_query(F.data == "vacancies")
-async def show_vacancies(callback: CallbackQuery):
-    await callback.message.answer("📋 Вакансии:", reply_markup=vacancies_keyboard())
-    await callback.answer()
-
+# ---------- NAV ----------
 
 @dp.callback_query(F.data == "back")
-async def back(callback: CallbackQuery):
-    await callback.message.answer("Главное меню", reply_markup=main_keyboard(callback.from_user.id))
-    await callback.answer()
+async def back(c: CallbackQuery):
+    await c.message.answer("Главное меню", reply_markup=main_kb(c.from_user.id))
+    await c.answer()
 
-# ================= ПРОСМОТР =================
 
-@dp.callback_query(F.data.startswith("vacancy:"))
-async def show_vacancy(callback: CallbackQuery):
-    vid = int(callback.data.split(":")[1])
-    data = get_vacancy(vid)
+@dp.callback_query(F.data == "admin")
+async def admin(c: CallbackQuery):
+    await c.message.answer("🛠 Админ-панель", reply_markup=admin_kb())
+    await c.answer()
 
-    if not data:
-        await callback.answer("Не найдено")
+
+# ---------- VACANCIES ----------
+
+@dp.callback_query(F.data == "vacancies")
+async def vacancies(c: CallbackQuery):
+    await c.message.answer("📋 Вакансии", reply_markup=vacancies_kb())
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("vac:"))
+async def show_vacancy(c: CallbackQuery):
+    v_id = int(c.data.split(":")[1])
+    v = get_vacancy(v_id)
+    if not v:
+        await c.answer("Не найдено")
         return
-
-    title, desc, link, image_id = data
-    text = f"<b>{title}</b>\n\n{desc}\n\n🔗 {link}"
-
-    if image_id:
-        await callback.message.answer_photo(
-            image_id,
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=vacancy_admin_keyboard(vid) if callback.from_user.id == ADMIN_ID else None
-        )
-    else:
-        await callback.message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=vacancy_admin_keyboard(vid) if callback.from_user.id == ADMIN_ID else None
-        )
-
-    await callback.answer()
-
-# ================= 🗑 УДАЛЕНИЕ С ПОДТВЕРЖДЕНИЕМ =================
-
-@dp.callback_query(F.data.startswith("delete:"))
-async def delete_request(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔", show_alert=True)
-        return
-
-    vid = int(callback.data.split(":")[1])
-
-    await callback.message.answer(
-        "⚠️ Ты уверен, что хочешь удалить вакансию?",
-        reply_markup=confirm_delete_keyboard(vid)
+    text = f"<b>{v[0]}</b>\n\n{v[1]}\n\n🔗 {v[2]}"
+    await c.message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=vacancy_admin_kb(v_id) if c.from_user.id == ADMIN_ID else None
     )
-    await callback.answer()
+    await c.answer()
 
 
-@dp.callback_query(F.data.startswith("confirm_delete:"))
-async def delete_confirmed(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("⛔", show_alert=True)
-        return
+# ---------- ADD ----------
 
-    vid = int(callback.data.split(":")[1])
-    delete_vacancy(vid)
-
-    await callback.message.answer("🗑 Вакансия удалена")
-    await callback.answer()
+@dp.callback_query(F.data == "add")
+async def add_start(c: CallbackQuery, s: FSMContext):
+    await s.set_state(AddVacancyFSM.title)
+    await c.message.answer("Название вакансии:")
+    await c.answer()
 
 
-@dp.callback_query(F.data == "cancel_delete")
-async def delete_cancel(callback: CallbackQuery):
-    await callback.message.answer("❌ Удаление отменено")
-    await callback.answer()
+@dp.message(AddVacancyFSM.title)
+async def add_title(m: Message, s: FSMContext):
+    await s.update_data(title=m.text)
+    await s.set_state(AddVacancyFSM.desc)
+    await m.answer("Описание:")
 
-# ================= MAIN =================
+
+@dp.message(AddVacancyFSM.desc)
+async def add_desc(m: Message, s: FSMContext):
+    await s.update_data(desc=m.text)
+    await s.set_state(AddVacancyFSM.link)
+    await m.answer("Ссылка:")
+
+
+@dp.message(AddVacancyFSM.link)
+async def add_link(m: Message, s: FSMContext):
+    d = await s.get_data()
+    add_vacancy(d["title"], d["desc"], m.text)
+    await s.clear()
+    await m.answer("✅ Вакансия добавлена", reply_markup=admin_kb())
+
+
+# ---------- EDIT ----------
+
+@dp.callback_query(F.data.startswith("edit:"))
+async def edit_start(c: CallbackQuery, s: FSMContext):
+    v_id = int(c.data.split(":")[1])
+    v = get_vacancy(v_id)
+    await s.set_state(EditVacancyFSM.vid)
+    await s.update_data(vid=v_id)
+    await c.message.answer(f"Новое название:\n(было: {v[0]})")
+    await s.set_state(EditVacancyFSM.title)
+    await c.answer()
+
+
+@dp.message(EditVacancyFSM.title)
+async def edit_title(m: Message, s: FSMContext):
+    await s.update_data(title=m.text)
+    await s.set_state(EditVacancyFSM.desc)
+    await m.answer("Новое описание:")
+
+
+@dp.message(EditVacancyFSM.desc)
+async def edit_desc(m: Message, s: FSMContext):
+    await s.update_data(desc=m.text)
+    await s.set_state(EditVacancyFSM.link)
+    await m.answer("Новая ссылка:")
+
+
+@dp.message(EditVacancyFSM.link)
+async def edit_link(m: Message, s: FSMContext):
+    d = await s.get_data()
+    update_vacancy(d["vid"], d["title"], d["desc"], m.text)
+    await s.clear()
+    await m.answer("✏️ Вакансия обновлена", reply_markup=admin_kb())
+
+
+# ---------- DELETE ----------
+
+@dp.callback_query(F.data.startswith("del:"))
+async def delete_ask(c: CallbackQuery):
+    v_id = int(c.data.split(":")[1])
+    await c.message.answer("Удалить вакансию?", reply_markup=confirm_kb(v_id))
+    await c.answer()
+
+
+@dp.callback_query(F.data.startswith("confirm:"))
+async def delete_confirm(c: CallbackQuery):
+    delete_vacancy(int(c.data.split(":")[1]))
+    await c.message.answer("🗑 Удалено", reply_markup=admin_kb())
+    await c.answer()
+
+
+# ---------- STATS ----------
+
+@dp.callback_query(F.data == "stats")
+async def stats(c: CallbackQuery):
+    s = user_stats()
+    text = (
+        f"📊 Статистика:\n\n"
+        f"Сегодня: {s['today']}\n"
+        f"7 дней: {s['week']}\n"
+        f"30 дней: {s['month']}\n"
+        f"Всего: {s['total']}"
+    )
+    await c.message.answer(text, reply_markup=admin_kb())
+    await c.answer()
+
+
+# ---------- TOGGLE ----------
+
+@dp.callback_query(F.data == "toggle")
+async def toggle(c: CallbackQuery):
+    toggle_notifications()
+    await c.message.answer("Настройки обновлены", reply_markup=admin_kb())
+    await c.answer()
+
+
+# ---------- RUN ----------
 
 async def main():
     init_db()
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
