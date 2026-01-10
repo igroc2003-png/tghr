@@ -163,7 +163,7 @@ async def vacancy(c: CallbackQuery):
 # ================= ADD FSM =================
 
 @dp.callback_query(F.data == "add_vacancy")
-async def add_start(c: CallbackQuery, s: FSMContext):
+async def add_start(call: CallbackQuery, state: FSMContext):
     await s.set_state(AddVacancy.photo)
     await c.message.answer("Фото или -", reply_markup=cancel_kb())
 
