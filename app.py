@@ -100,7 +100,7 @@ def confirm_delete_kb(vid):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Да", callback_data=f"del_yes:{vid}"),
-            InlineKeyboardButton(text="❌ Нет", callback_data="vacancies")
+            InlineKeyboardButton(text="❌ Нет", callback_data="cancel")
         ]
     ])
 
@@ -123,11 +123,27 @@ async def start(m: Message):
 
     await m.answer("Добро пожаловать", reply_markup=main_kb(m.from_user.id))
 
+# ================= NAV =================
+
+@dp.callback_query(F.data == "back")
+async def back(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.clear()
+    await c.message.answer("Главное меню", reply_markup=main_kb(c.from_user.id))
+
+@dp.callback_query(F.data == "admin")
+async def admin(c: CallbackQuery):
+    await c.answer()
+    if c.from_user.id != ADMIN_ID:
+        return
+    await c.message.answer("Админ панель", reply_markup=admin_kb())
+
 # ================= VACANCIES =================
 
 @dp.callback_query(F.data == "vacancies")
-async def vacancies(c: CallbackQuery):
+async def vacancies(c: CallbackQuery, state: FSMContext):
     await c.answer()
+    await state.clear()
     with db() as conn:
         rows = conn.execute("SELECT id, title FROM vacancies").fetchall()
 
@@ -197,7 +213,7 @@ async def add_link(m: Message, state: FSMContext):
     await state.clear()
     await m.answer("✅ Вакансия добавлена", reply_markup=main_kb(m.from_user.id))
 
-# ================= EDIT FSM (С ПОДДЕРЖКОЙ '-') =================
+# ================= EDIT FSM =================
 
 @dp.callback_query(F.data.startswith("edit:"))
 async def edit_start(c: CallbackQuery, state: FSMContext):
@@ -268,6 +284,80 @@ async def edit_link(m: Message, state: FSMContext):
 
     await state.clear()
     await m.answer("✏️ Обновлено", reply_markup=main_kb(m.from_user.id))
+
+# ================= DELETE =================
+
+@dp.callback_query(F.data.startswith("del:"))
+async def delete_confirm(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.clear()
+    vid = int(c.data.split(":")[1])
+    await c.message.answer("Удалить вакансию?", reply_markup=confirm_delete_kb(vid))
+
+@dp.callback_query(F.data.startswith("del_yes:"))
+async def delete_yes(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.clear()
+    vid = int(c.data.split(":")[1])
+    with db() as conn:
+        conn.execute("DELETE FROM vacancies WHERE id=?", (vid,))
+        conn.commit()
+
+    await c.message.answer("🗑 Удалено", reply_markup=main_kb(c.from_user.id))
+
+# ================= STATS =================
+
+@dp.callback_query(F.data == "stats")
+async def stats(c: CallbackQuery):
+    await c.answer()
+    today = datetime.now().date()
+    with db() as conn:
+        cur = conn.cursor()
+        total = cur.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        d1 = cur.execute("SELECT COUNT(*) FROM users WHERE joined=?", (today,)).fetchone()[0]
+        d7 = cur.execute(
+            "SELECT COUNT(*) FROM users WHERE joined>=?",
+            (today - timedelta(days=7),)
+        ).fetchone()[0]
+        d30 = cur.execute(
+            "SELECT COUNT(*) FROM users WHERE joined>=?",
+            (today - timedelta(days=30),)
+        ).fetchone()[0]
+
+    await c.message.answer(
+        f"📊 Статистика\n"
+        f"Сегодня: {d1}\n"
+        f"7 дней: {d7}\n"
+        f"30 дней: {d30}\n"
+        f"Всего: {total}"
+    )
+
+# ================= NOTIFY =================
+
+@dp.callback_query(F.data == "notify")
+async def toggle_notify(c: CallbackQuery):
+    await c.answer()
+    with db() as conn:
+        cur = conn.cursor()
+        val = cur.execute(
+            "SELECT value FROM settings WHERE key='notify_users'"
+        ).fetchone()[0]
+        new = 0 if val else 1
+        cur.execute(
+            "UPDATE settings SET value=? WHERE key='notify_users'",
+            (new,)
+        )
+        conn.commit()
+
+    await c.message.answer(
+        "🔔 Уведомления ВКЛ" if new else "🔕 Уведомления ВЫКЛ"
+    )
+
+@dp.callback_query(F.data == "cancel")
+async def cancel(c: CallbackQuery, state: FSMContext):
+    await c.answer()
+    await state.clear()
+    await c.message.answer("Отменено", reply_markup=main_kb(c.from_user.id))
 
 # ================= MAIN =================
 
