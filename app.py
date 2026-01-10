@@ -76,7 +76,7 @@ def main_kb(uid):
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="add")],
+        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="add_vacancy")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
         [InlineKeyboardButton(text="🔔 Уведомления", callback_data="notify")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="back")]
@@ -162,7 +162,7 @@ async def vacancy(c: CallbackQuery):
 
 # ================= ADD FSM =================
 
-@dp.callback_query(F.data == "add")
+@dp.callback_query(F.data == "add_vacancy")
 async def add_start(c: CallbackQuery, s: FSMContext):
     await s.set_state(AddVacancy.photo)
     await c.message.answer("Фото или -", reply_markup=cancel_kb())
