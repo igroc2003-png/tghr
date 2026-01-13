@@ -7,193 +7,138 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     InlineKeyboardButton
 )
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramBadRequest
 
-from config import BOT_TOKEN, CHANNEL_ID, CHANNEL_NUMERIC_ID
-from db import save_user_tags, get_all_users, can_send
+from config import BOT_TOKEN, CHANNEL_ID, CHANNEL_NUMERIC_ID, ADMIN_ID
+from db import (
+    save_user_tags,
+    get_all_users,
+    count_users,
+    can_send,
+    block_user
+)
 
-
-# ================== INIT ==================
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-
-# ================== KEYBOARDS ==================
-def start_kb():
+# ================= KEYBOARDS =================
+def admin_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🔍 Подобрать вакансию", callback_data="start_form")]
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="🎯 Рассылка по тегу", callback_data="admin_tag")],
         ]
     )
 
 
-def format_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🏠 Удалёнка", callback_data="format_remote"),
-                InlineKeyboardButton(text="🏢 Офис", callback_data="format_office")
-            ]
-        ]
-    )
+# ================= ADMIN CHECK =================
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
 
 
-def experience_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🆕 Без опыта", callback_data="exp_no"),
-                InlineKeyboardButton(text="💼 С опытом", callback_data="exp_yes")
-            ]
-        ]
-    )
+# ================= /admin =================
+@dp.message(Command("admin"))
+async def admin_panel(message: Message):
+    if not is_admin(message.from_user.id):
+        return
 
-
-def salary_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="💰 до 80k", callback_data="sal_80"),
-                InlineKeyboardButton(text="💰 100k+", callback_data="sal_100")
-            ]
-        ]
-    )
-
-
-def subscribe_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📢 Перейти в канал", url=f"https://t.me/{CHANNEL_ID.lstrip('@')}")],
-            [InlineKeyboardButton(text="✅ Я подписался", callback_data="check_sub")]
-        ]
-    )
-
-
-# ================== FSM STATES ==================
-class VacancyForm:
-    format = "format"
-    experience = "experience"
-    salary = "salary"
-
-
-# ================== /start ==================
-@dp.message(CommandStart())
-async def start(message: Message):
     await message.answer(
-        "👋 Привет!\n\n"
-        "Я подберу для тебя вакансии автоматически 👇",
-        reply_markup=start_kb()
+        "🔥 Админ-панель",
+        reply_markup=admin_kb()
     )
 
 
-# ================== FORM ==================
-@dp.callback_query(F.data == "start_form")
-async def start_form(call: CallbackQuery, state: FSMContext):
-    await state.set_state(VacancyForm.format)
-    await call.message.edit_text(
-        "💼 Выбери формат работы:",
-        reply_markup=format_kb()
-    )
-
-
-@dp.callback_query(F.data.startswith("format_"))
-async def set_format(call: CallbackQuery, state: FSMContext):
-    await state.update_data(format=call.data.replace("format_", ""))
-    await state.set_state(VacancyForm.experience)
-    await call.message.edit_text(
-        "📊 Есть ли опыт?",
-        reply_markup=experience_kb()
-    )
-
-
-@dp.callback_query(F.data.startswith("exp_"))
-async def set_experience(call: CallbackQuery, state: FSMContext):
-    await state.update_data(experience=call.data.replace("exp_", ""))
-    await state.set_state(VacancyForm.salary)
-    await call.message.edit_text(
-        "💰 Желаемый доход:",
-        reply_markup=salary_kb()
-    )
-
-
-@dp.callback_query(F.data.startswith("sal_"))
-async def set_salary(call: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-
-    tags = [
-        data["format"],
-        data["experience"],
-        call.data.replace("sal_", "")
-    ]
-
-    save_user_tags(call.from_user.id, tags)
-
-    await call.message.edit_text(
-        "✅ Готово!\n\n"
-        "Я буду присылать тебе подходящие вакансии.\n"
-        "Подпишись на канал 👇",
-        reply_markup=subscribe_kb()
-    )
-
-
-# ================== SUB CHECK ==================
-@dp.callback_query(F.data == "check_sub")
-async def check_sub(call: CallbackQuery):
-    try:
-        member = await bot.get_chat_member(CHANNEL_ID, call.from_user.id)
-
-        if member.status in ("member", "administrator", "creator"):
-            await call.message.edit_text(
-                "🔥 Отлично!\n\n"
-                "Теперь ты будешь получать вакансии автоматически."
-            )
-        else:
-            await call.answer("❌ Подписка не найдена", show_alert=True)
-
-    except TelegramBadRequest:
-        await call.answer(
-            "⚠️ Не удалось проверить подписку.\nПодпишись на канал.",
-            show_alert=True
-        )
-
-
-# ================== CHANNEL → USERS ==================
-@dp.channel_post()
-async def channel_post_handler(message: Message):
-    if message.chat.id != CHANNEL_NUMERIC_ID:
+# ================= STATS =================
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+    if not is_admin(call.from_user.id):
         return
 
-    text = message.text or message.caption
-    if not text:
+    total = count_users()
+
+    await call.message.edit_text(
+        f"📊 Статистика:\n\n"
+        f"👥 Пользователей: {total}",
+        reply_markup=admin_kb()
+    )
+
+
+# ================= BROADCAST =================
+@dp.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
         return
 
-    text_lower = text.lower()
+    await state.set_state("broadcast_text")
+    await call.message.edit_text("📢 Отправь текст рассылки:")
 
+
+@dp.message(F.text, state="broadcast_text")
+async def send_broadcast(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    text = message.text
     users = get_all_users()
 
+    sent = 0
+    for user_id, _ in users:
+        try:
+            await bot.send_message(user_id, text)
+            sent += 1
+            await asyncio.sleep(0.5)
+        except:
+            block_user(user_id)
+
+    await message.answer(f"✅ Рассылка завершена\nОтправлено: {sent}")
+    await state.clear()
+
+
+# ================= TAG BROADCAST =================
+@dp.callback_query(F.data == "admin_tag")
+async def admin_tag(call: CallbackQuery, state: FSMContext):
+    if not is_admin(call.from_user.id):
+        return
+
+    await state.set_state("tag_name")
+    await call.message.edit_text("🎯 Введи тег (например: remote):")
+
+
+@dp.message(F.text, state="tag_name")
+async def tag_name(message: Message, state: FSMContext):
+    await state.update_data(tag=message.text.lower())
+    await state.set_state("tag_text")
+    await message.answer("✍️ Введи текст рассылки:")
+
+
+@dp.message(F.text, state="tag_text")
+async def send_tag_broadcast(message: Message, state: FSMContext):
+    data = await state.get_data()
+    tag = data["tag"]
+    text = message.text
+
+    users = get_all_users()
+    sent = 0
+
     for user_id, tags_str in users:
-        tags = tags_str.split(",")
-
-        if not all(tag in text_lower for tag in tags):
-            continue
-
-        if not can_send(user_id, limit=3):
+        if tag not in tags_str:
             continue
 
         try:
-            await bot.send_message(
-                user_id,
-                "🔥 Вакансия по твоим параметрам:\n\n" + text
-            )
-            await asyncio.sleep(1.2)
+            await bot.send_message(user_id, text)
+            sent += 1
+            await asyncio.sleep(0.6)
         except:
-            pass
+            block_user(user_id)
+
+    await message.answer(f"✅ Отправлено по тегу «{tag}»: {sent}")
+    await state.clear()
 
 
-# ================== RUN ==================
+# ================= RUN =================
 async def main():
     await dp.start_polling(bot)
 
