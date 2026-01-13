@@ -1,54 +1,43 @@
+
 import asyncio
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import CommandStart
 from aiogram.enums import ChatMemberStatus
 
-from config import BOT_TOKEN, CHANNEL_USERNAME
+from config import BOT_TOKEN, CHANNEL_USERNAME, ADMIN_ID
+from db import add_user_tag, get_users_by_tag
 
-bot = Bot(token=BOT_TOKEN)
+bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 
+def categories_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚚 Доставка / Курьеры", callback_data="cat_delivery")],
+        [InlineKeyboardButton(text="💻 Удалёнка", callback_data="cat_remote")],
+        [InlineKeyboardButton(text="💼 Офис / Продажи", callback_data="cat_office")],
+    ])
 
-# ---------- КНОПКИ ----------
+def delivery_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚴 Курьер", callback_data="tag_Курьер")],
+        [InlineKeyboardButton(text="📦 Доставка", callback_data="tag_Доставка")],
+        [InlineKeyboardButton(text="🕒 Подработка", callback_data="tag_Подработка")],
+    ])
 
-def subscribe_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="📢 Подписаться на канал",
-                    url=f"https://t.me/{CHANNEL_USERNAME[1:]}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я подписался",
-                    callback_data="check_sub"
-                )
-            ]
-        ]
-    )
+def remote_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🏠 Удаленка", callback_data="tag_Удаленка")],
+        [InlineKeyboardButton(text="📞 CallCenter", callback_data="tag_CallCenter")],
+    ])
 
+def office_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💼 Офис", callback_data="tag_Офис")],
+        [InlineKeyboardButton(text="📈 Продажи", callback_data="tag_Продажи")],
+    ])
 
-def directions_kb():
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🐍 Python", callback_data="dir_python")],
-            [InlineKeyboardButton(text="🎨 Дизайн", callback_data="dir_design")],
-            [InlineKeyboardButton(text="📊 Менеджмент", callback_data="dir_management")]
-        ]
-    )
-
-
-# ---------- ПРОВЕРКА ПОДПИСКИ ----------
-
-async def is_subscribed(user_id: int) -> bool:
+async def is_subscribed(user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in (
@@ -59,65 +48,56 @@ async def is_subscribed(user_id: int) -> bool:
     except:
         return False
 
-
-# ---------- /start ----------
-
 @dp.message(CommandStart())
 async def start(message: Message):
     if not await is_subscribed(message.from_user.id):
         await message.answer(
-            "🔒 Для доступа к подбору вакансий\n"
-            "подпишись на канал 👇",
-            reply_markup=subscribe_kb()
+            "🔒 Подпишись на канал:\n"
+            f"https://t.me/{CHANNEL_USERNAME[1:]}"
         )
         return
 
-    await message.answer(
-        "👋 Я бесплатно подбираю вакансии по интересам.\n\n"
-        "🎯 Выбери направление 👇",
-        reply_markup=directions_kb()
-    )
+    await message.answer("Выбери категорию:", reply_markup=categories_kb())
 
+@dp.callback_query(F.data == "cat_delivery")
+async def cat_delivery(callback: CallbackQuery):
+    await callback.message.edit_text("Доставка:", reply_markup=delivery_kb())
 
-# ---------- ПРОВЕРКА КНОПКИ «Я ПОДПИСАЛСЯ» ----------
+@dp.callback_query(F.data == "cat_remote")
+async def cat_remote(callback: CallbackQuery):
+    await callback.message.edit_text("Удалёнка:", reply_markup=remote_kb())
 
-@dp.callback_query(F.data == "check_sub")
-async def check_sub(callback: CallbackQuery):
-    if await is_subscribed(callback.from_user.id):
-        await callback.message.edit_text(
-            "✅ Спасибо за подписку!\n\n"
-            "🎯 Теперь выбери направление 👇",
-            reply_markup=directions_kb()
-        )
-    else:
-        await callback.answer(
-            "❌ Подписка не найдена.\nПодпишись и нажми ещё раз.",
-            show_alert=True
-        )
+@dp.callback_query(F.data == "cat_office")
+async def cat_office(callback: CallbackQuery):
+    await callback.message.edit_text("Офис:", reply_markup=office_kb())
 
-
-# ---------- ВЫБОР НАПРАВЛЕНИЯ ----------
-
-@dp.callback_query(F.data.startswith("dir_"))
-async def choose_direction(callback: CallbackQuery):
-    direction = callback.data.replace("dir_", "")
-
-    await callback.message.answer(
-        f"✅ Отлично!\n\n"
-        f"Я буду подбирать вакансии по направлению:\n"
-        f"🔥 {direction.capitalize()}\n\n"
-        f"📢 Все вакансии публикуем в канале:\n"
-        f"{CHANNEL_USERNAME}"
-    )
+@dp.callback_query(F.data.startswith("tag_"))
+async def save_tag(callback: CallbackQuery):
+    tag = callback.data.replace("tag_", "")
+    add_user_tag(callback.from_user.id, tag)
+    await callback.message.answer(f"Тег сохранён: #{tag}")
     await callback.answer()
 
+@dp.message(F.from_user.id == ADMIN_ID)
+async def admin_post(message: Message):
+    text = message.text or ""
+    tags = {w[1:] for w in text.split() if w.startswith("#")}
 
-# ---------- ЗАПУСК ----------
+    await bot.send_message(CHANNEL_USERNAME, text)
+
+    sent = 0
+    for tag in tags:
+        for uid in get_users_by_tag(tag):
+            try:
+                await bot.send_message(uid, text)
+                sent += 1
+            except:
+                pass
+
+    await message.reply(f"Опубликовано в канале и разослано ({sent})")
 
 async def main():
-    print("🤖 Бот запущен")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
