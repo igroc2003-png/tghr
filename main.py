@@ -73,14 +73,18 @@ def salary_kb():
 def subscribe_kb():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(
-                text="📢 Перейти в канал",
-                url=f"https://t.me/{CHANNEL_ID.lstrip('@')}"
-            )],
-            [InlineKeyboardButton(
-                text="✅ Я подписался",
-                callback_data="check_sub"
-            )]
+            [
+                InlineKeyboardButton(
+                    text="📢 Перейти в канал",
+                    url=f"https://t.me/{CHANNEL_ID.lstrip('@')}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я подписался",
+                    callback_data="check_sub"
+                )
+            ]
         ]
     )
 
@@ -114,7 +118,8 @@ TAG_TEXT = "tag_text"
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
-        "👋 Привет!\nЯ подберу тебе вакансии автоматически 👇",
+        "👋 Привет!\n\n"
+        "Я помогу автоматически подобрать вакансии 👇",
         reply_markup=start_kb()
     )
 
@@ -123,7 +128,7 @@ async def start(message: Message):
 async def start_form(call: CallbackQuery, state: FSMContext):
     await state.set_state(FORM_FORMAT)
     await call.message.edit_text(
-        "💼 Формат работы:",
+        "💼 Выбери формат работы:",
         reply_markup=format_kb()
     )
 
@@ -133,7 +138,7 @@ async def set_format(call: CallbackQuery, state: FSMContext):
     await state.update_data(format=call.data.replace("format_", ""))
     await state.set_state(FORM_EXP)
     await call.message.edit_text(
-        "📊 Есть ли опыт?",
+        "📊 Есть ли у тебя опыт?",
         reply_markup=experience_kb()
     )
 
@@ -156,9 +161,40 @@ async def set_salary(call: CallbackQuery, state: FSMContext):
 
     await state.clear()
     await call.message.edit_text(
-        "✅ Готово!\nЯ буду присылать подходящие вакансии.\nПодпишись на канал 👇",
+        "✅ Отлично!\n\n"
+        "Я буду присылать тебе подходящие вакансии.\n"
+        "Подпишись на канал 👇",
         reply_markup=subscribe_kb()
     )
+
+
+# ================= CHECK SUBSCRIPTION =================
+@dp.callback_query(F.data == "check_sub")
+async def check_sub(call: CallbackQuery):
+    try:
+        member = await bot.get_chat_member(
+            CHANNEL_NUMERIC_ID,
+            call.from_user.id
+        )
+
+        if member.status in ("member", "administrator", "creator"):
+            await call.message.edit_text(
+                "🔥 Подписка подтверждена!\n\n"
+                "Теперь ты будешь получать вакансии автоматически ✅"
+            )
+        else:
+            await call.answer(
+                "❌ Подписка не найдена.\n"
+                "Подпишись на канал и нажми кнопку ещё раз.",
+                show_alert=True
+            )
+
+    except Exception:
+        await call.answer(
+            "⚠️ Не удалось проверить подписку.\n"
+            "Убедись, что ты подписался на канал.",
+            show_alert=True
+        )
 
 
 # ================= ADMIN =================
@@ -167,7 +203,10 @@ async def admin_panel(message: Message):
     if not is_admin(message.from_user.id):
         return
 
-    await message.answer("🔥 Админ-панель", reply_markup=admin_kb())
+    await message.answer(
+        "🔥 Админ-панель",
+        reply_markup=admin_kb()
+    )
 
 
 @dp.callback_query(F.data == "admin_stats")
