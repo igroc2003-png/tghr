@@ -10,7 +10,8 @@ cursor = conn.cursor()
 cursor.execute("""
 CREATE TABLE IF NOT EXISTS users (
     user_id INTEGER PRIMARY KEY,
-    tags TEXT
+    tags TEXT,
+    is_blocked INTEGER DEFAULT 0
 )
 """)
 
@@ -36,8 +37,23 @@ def save_user_tags(user_id: int, tags: list[str]):
 
 
 def get_all_users():
-    cursor.execute("SELECT user_id, tags FROM users")
+    cursor.execute(
+        "SELECT user_id, tags FROM users WHERE is_blocked = 0"
+    )
     return cursor.fetchall()
+
+
+def count_users():
+    cursor.execute("SELECT COUNT(*) FROM users")
+    return cursor.fetchone()[0]
+
+
+def block_user(user_id: int):
+    cursor.execute(
+        "UPDATE users SET is_blocked = 1 WHERE user_id = ?",
+        (user_id,)
+    )
+    conn.commit()
 
 
 # ---------- ANTISPAM ----------
