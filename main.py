@@ -1,20 +1,20 @@
 import asyncio
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, CHANNEL_NUMERIC_ID
+from config import BOT_TOKEN, CHANNEL_NUMERIC_ID, ADMIN_ID
 from smart_tags import extract_tags
-from db import save_user, get_users, save_vacancy
+from db import save_user, get_users, save_vacancy, count_users, count_vacancies
 
 bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(storage=MemoryStorage())
 
+class AddVacancy(StatesGroup):
+    waiting_text = State()
 
 def interests_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -23,55 +23,66 @@ def interests_kb():
         [InlineKeyboardButton(text="📊 Менеджмент", callback_data="interest_manager")]
     ])
 
+def admin_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="admin_add")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
+    ])
 
 @dp.message(CommandStart())
 async def start(msg: Message):
-    await msg.answer(
-        "👋 Я бесплатно подбираю вакансии по интересам.\n\n"
-        "Выбери направление 👇",
-        reply_markup=interests_kb()
-    )
-
+    if msg.from_user.id == ADMIN_ID:
+        await msg.answer("👑 Админ-панель", reply_markup=admin_kb())
+    else:
+        await msg.answer("👋 Я бесплатно подбираю вакансии по интересам", reply_markup=interests_kb())
 
 @dp.callback_query(F.data.startswith("interest_"))
 async def save_interest(call: CallbackQuery):
-    interest = call.data.replace("interest_", "")
-    save_user(call.from_user.id, interest)
+    save_user(call.from_user.id, call.data.replace("interest_", ""))
+    await call.message.edit_text("✅ Интерес сохранён")
 
-    await call.message.edit_text(
-        f"✅ Готово!\n\n"
-        f"Я буду присылать вакансии по направлению: *{interest}*",
-        parse_mode="Markdown"
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        return
+    await call.message.answer(
+        f"📊 Статистика\n\n👥 Пользователей: {count_users()}\n📄 Вакансий: {count_vacancies()}"
     )
 
-
-@dp.channel_post()
-async def channel_post(msg: Message):
-    if msg.chat.id != CHANNEL_NUMERIC_ID:
+@dp.callback_query(F.data == "admin_add")
+async def admin_add(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID:
         return
+    await state.set_state(AddVacancy.waiting_text)
+    await call.message.answer("✍️ Отправь текст вакансии")
 
-    text = msg.text or msg.caption
-    if not text:
-        return
-
+@dp.message(AddVacancy.waiting_text)
+async def add_vacancy(msg: Message, state: FSMContext):
+    text = msg.text
     tags = extract_tags(text)
+
     save_vacancy(text, str(tags))
 
+    await bot.send_message(
+        CHANNEL_NUMERIC_ID,
+        f"🔥 Новая вакансия\n\n{text}\n\n🏷 {tags['profession']} | {tags['level']} | {tags['format']}"
+    )
+
+    sent = 0
     for user_id, interest in get_users():
-        if tags["profession"] == interest:
+        if interest == tags["profession"]:
             try:
-                await bot.send_message(
-                    user_id,
-                    f"🔥 Подходящая вакансия:\n\n{text}"
-                )
-                await asyncio.sleep(0.5)
+                await bot.send_message(user_id, f"🔥 Вакансия:\n\n{text}")
+                sent += 1
+                await asyncio.sleep(0.4)
             except:
                 pass
 
+    await msg.answer(f"✅ Вакансия добавлена\n📨 Отправлено: {sent}", reply_markup=admin_kb())
+    await state.clear()
 
 async def main():
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
