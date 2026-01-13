@@ -1,8 +1,7 @@
+
 import asyncio
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-)
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import CommandStart
 from aiogram.enums import ChatMemberStatus
 
@@ -11,8 +10,8 @@ from db import add_user_tag, get_users_by_tag
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
-
-# ====== КНОПКИ ======
+router = Router()
+dp.include_router(router)
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -45,8 +44,6 @@ def office_kb():
         [InlineKeyboardButton(text="📈 Продажи", callback_data="tag_Продажи")],
     ])
 
-# ====== ПРОВЕРКА ПОДПИСКИ ======
-
 async def is_subscribed(user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
@@ -58,9 +55,7 @@ async def is_subscribed(user_id: int):
     except:
         return False
 
-# ====== START ======
-
-@dp.message(CommandStart())
+@router.message(CommandStart())
 async def start(message: Message):
     if not await is_subscribed(message.from_user.id):
         await message.answer(
@@ -74,19 +69,41 @@ async def start(message: Message):
     else:
         await message.answer("Выбери категорию:", reply_markup=categories_kb())
 
-# ====== АДМИН: ДОБАВЛЕНИЕ ВАКАНСИИ ======
+@router.callback_query(F.data == "cat_delivery")
+async def cat_delivery(cb: CallbackQuery):
+    await cb.message.answer("Выбери интерес:", reply_markup=delivery_kb())
+    await cb.answer()
 
-@dp.callback_query(F.data == "add_job")
+@router.callback_query(F.data == "cat_remote")
+async def cat_remote(cb: CallbackQuery):
+    await cb.message.answer("Выбери интерес:", reply_markup=remote_kb())
+    await cb.answer()
+
+@router.callback_query(F.data == "cat_office")
+async def cat_office(cb: CallbackQuery):
+    await cb.message.answer("Выбери интерес:", reply_markup=office_kb())
+    await cb.answer()
+
+@router.callback_query(F.data.startswith("tag_"))
+async def save_tag(callback: CallbackQuery):
+    tag = callback.data.replace("tag_", "")
+    add_user_tag(callback.from_user.id, tag)
+    await callback.message.answer(f"✅ Интерес сохранён: #{tag}")
+    await callback.answer()
+
+@router.callback_query(F.data == "add_job")
 async def add_job(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("⛔ Нет доступа", show_alert=True)
+        return
     await cb.message.answer(
         "✏️ Отправь текст вакансии ОДНИМ сообщением\n\n"
-        "❗ Обязательно укажи теги внизу:\n"
-        "#Курьер #Удаленка #БезОпыта"
+        "Пример тегов: #Курьер #Удаленка #БезОпыта"
     )
-    await cb.answer()
     dp["awaiting_job"] = True
+    await cb.answer()
 
-@dp.message(F.from_user.id == ADMIN_ID)
+@router.message(F.from_user.id == ADMIN_ID)
 async def admin_post(message: Message):
     if not dp.get("awaiting_job"):
         return
@@ -95,10 +112,8 @@ async def admin_post(message: Message):
     text = message.text or ""
     tags = {w[1:] for w in text.split() if w.startswith("#")}
 
-    # Публикация в канал
     await bot.send_message(CHANNEL_USERNAME, text)
 
-    # Рассылка
     sent = 0
     for tag in tags:
         for uid in get_users_by_tag(tag):
@@ -109,17 +124,6 @@ async def admin_post(message: Message):
                 pass
 
     await message.answer(f"✅ Вакансия опубликована\n📩 Рассылка: {sent} чел")
-
-# hooking user tags
-
-@dp.callback_query(F.data.startswith("tag_"))
-async def save_tag(callback: CallbackQuery):
-    tag = callback.data.replace("tag_", "")
-    add_user_tag(callback.from_user.id, tag)
-    await callback.message.answer(f"✅ Интерес сохранён: #{tag}")
-    await callback.answer()
-
-# ====== RUN ======
 
 async def main():
     await dp.start_polling(bot)
