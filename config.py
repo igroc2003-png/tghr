@@ -1,0 +1,5 @@
+import os
+
+BOT_TOKEN = os.getenv("BOT_TOKEN") or "PASTE_BOT_TOKEN_HERE"
+
+CHANNEL_USERNAME = "@HR_JOB_s"
