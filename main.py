@@ -1,129 +1,85 @@
-
 import asyncio
-from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart
-from aiogram.enums import ChatMemberStatus
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, CHANNEL_USERNAME, ADMIN_ID
-from db import add_user_tag, get_users_by_tag
+from config import BOT_TOKEN, CHANNEL_NUMERIC_ID, ADMIN_ID
+from smart_tags import extract_tags
+from db import save_user, get_users, save_vacancy, count_users, count_vacancies
 
 bot = Bot(BOT_TOKEN)
-dp = Dispatcher()
-router = Router()
-dp.include_router(router)
+dp = Dispatcher(storage=MemoryStorage())
+
+class AddVacancy(StatesGroup):
+    waiting_text = State()
+
+def interests_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🐍 Python", callback_data="interest_python")],
+        [InlineKeyboardButton(text="🎨 Дизайн", callback_data="interest_designer")],
+        [InlineKeyboardButton(text="📊 Менеджмент", callback_data="interest_manager")]
+    ])
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="add_job")]
+        [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="admin_add")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")]
     ])
 
-def categories_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚚 Доставка / Курьеры", callback_data="cat_delivery")],
-        [InlineKeyboardButton(text="💻 Удалёнка", callback_data="cat_remote")],
-        [InlineKeyboardButton(text="💼 Офис / Продажи", callback_data="cat_office")],
-    ])
-
-def delivery_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚴 Курьер", callback_data="tag_Курьер")],
-        [InlineKeyboardButton(text="📦 Доставка", callback_data="tag_Доставка")],
-        [InlineKeyboardButton(text="🕒 Подработка", callback_data="tag_Подработка")],
-    ])
-
-def remote_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 Удаленка", callback_data="tag_Удаленка")],
-        [InlineKeyboardButton(text="📞 CallCenter", callback_data="tag_CallCenter")],
-    ])
-
-def office_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Офис", callback_data="tag_Офис")],
-        [InlineKeyboardButton(text="📈 Продажи", callback_data="tag_Продажи")],
-    ])
-
-async def is_subscribed(user_id: int):
-    try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in (
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.CREATOR
-        )
-    except:
-        return False
-
-@router.message(CommandStart())
-async def start(message: Message):
-    if not await is_subscribed(message.from_user.id):
-        await message.answer(
-            "🔒 Подпишись на канал:\n"
-            f"https://t.me/{CHANNEL_USERNAME[1:]}"
-        )
-        return
-
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Админ-панель", reply_markup=admin_kb())
+@dp.message(CommandStart())
+async def start(msg: Message):
+    if msg.from_user.id == ADMIN_ID:
+        await msg.answer("👑 Админ-панель", reply_markup=admin_kb())
     else:
-        await message.answer("Выбери категорию:", reply_markup=categories_kb())
+        await msg.answer("👋 Я бесплатно подбираю вакансии по интересам", reply_markup=interests_kb())
 
-@router.callback_query(F.data == "cat_delivery")
-async def cat_delivery(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=delivery_kb())
-    await cb.answer()
+@dp.callback_query(F.data.startswith("interest_"))
+async def save_interest(call: CallbackQuery):
+    save_user(call.from_user.id, call.data.replace("interest_", ""))
+    await call.message.edit_text("✅ Интерес сохранён")
 
-@router.callback_query(F.data == "cat_remote")
-async def cat_remote(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=remote_kb())
-    await cb.answer()
-
-@router.callback_query(F.data == "cat_office")
-async def cat_office(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=office_kb())
-    await cb.answer()
-
-@router.callback_query(F.data.startswith("tag_"))
-async def save_tag(callback: CallbackQuery):
-    tag = callback.data.replace("tag_", "")
-    add_user_tag(callback.from_user.id, tag)
-    await callback.message.answer(f"✅ Интерес сохранён: #{tag}")
-    await callback.answer()
-
-@router.callback_query(F.data == "add_job")
-async def add_job(cb: CallbackQuery):
-    if cb.from_user.id != ADMIN_ID:
-        await cb.answer("⛔ Нет доступа", show_alert=True)
+@dp.callback_query(F.data == "admin_stats")
+async def admin_stats(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
         return
-    await cb.message.answer(
-        "✏️ Отправь текст вакансии ОДНИМ сообщением\n\n"
-        "Пример тегов: #Курьер #Удаленка #БезОпыта"
+    await call.message.answer(
+        f"📊 Статистика\n\n👥 Пользователей: {count_users()}\n📄 Вакансий: {count_vacancies()}"
     )
-    dp["awaiting_job"] = True
-    await cb.answer()
 
-@router.message(F.from_user.id == ADMIN_ID)
-async def admin_post(message: Message):
-    if not dp.get("awaiting_job"):
+@dp.callback_query(F.data == "admin_add")
+async def admin_add(call: CallbackQuery, state: FSMContext):
+    if call.from_user.id != ADMIN_ID:
         return
+    await state.set_state(AddVacancy.waiting_text)
+    await call.message.answer("✍️ Отправь текст вакансии")
 
-    dp["awaiting_job"] = False
-    text = message.text or ""
-    tags = {w[1:] for w in text.split() if w.startswith("#")}
+@dp.message(AddVacancy.waiting_text)
+async def add_vacancy(msg: Message, state: FSMContext):
+    text = msg.text
+    tags = extract_tags(text)
 
-    await bot.send_message(CHANNEL_USERNAME, text)
+    save_vacancy(text, str(tags))
+
+    await bot.send_message(
+        CHANNEL_NUMERIC_ID,
+        f"🔥 Новая вакансия\n\n{text}\n\n🏷 {tags['profession']} | {tags['level']} | {tags['format']}"
+    )
 
     sent = 0
-    for tag in tags:
-        for uid in get_users_by_tag(tag):
+    for user_id, interest in get_users():
+        if interest == tags["profession"]:
             try:
-                await bot.send_message(uid, text)
+                await bot.send_message(user_id, f"🔥 Вакансия:\n\n{text}")
                 sent += 1
+                await asyncio.sleep(0.4)
             except:
                 pass
 
-    await message.answer(f"✅ Вакансия опубликована\n📩 Рассылка: {sent} чел")
+    await msg.answer(f"✅ Вакансия добавлена\n📨 Отправлено: {sent}", reply_markup=admin_kb())
+    await state.clear()
 
 async def main():
     await dp.start_polling(bot)
