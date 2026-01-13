@@ -1,4 +1,5 @@
 import asyncio
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart
@@ -6,17 +7,20 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramBadRequest
 
-from config import BOT_TOKEN, CHANNEL_ID
+from config import BOT_TOKEN, CHANNEL_ID, CHANNEL_NUMERIC_ID
 from states import VacancyForm
 import keyboards as kb
+
 from db import save_user_tags
 from matcher import match_users
+from tag_parser import extract_tags
+
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 
-# -------------------- /start --------------------
+# ==================== /start ====================
 @dp.message(CommandStart())
 async def start(message: Message):
     await message.answer(
@@ -26,7 +30,7 @@ async def start(message: Message):
     )
 
 
-# -------------------- START FORM --------------------
+# ==================== START FORM ====================
 @dp.callback_query(F.data == "start_form")
 async def start_form(call: CallbackQuery, state: FSMContext):
     await state.set_state(VacancyForm.format)
@@ -36,7 +40,7 @@ async def start_form(call: CallbackQuery, state: FSMContext):
     )
 
 
-# -------------------- FORMAT --------------------
+# ==================== FORMAT ====================
 @dp.callback_query(F.data.startswith("format_"))
 async def set_format(call: CallbackQuery, state: FSMContext):
     await state.update_data(format=call.data)
@@ -48,7 +52,7 @@ async def set_format(call: CallbackQuery, state: FSMContext):
     )
 
 
-# -------------------- EXPERIENCE --------------------
+# ==================== EXPERIENCE ====================
 @dp.callback_query(F.data.startswith("exp_"))
 async def set_experience(call: CallbackQuery, state: FSMContext):
     await state.update_data(experience=call.data)
@@ -60,12 +64,11 @@ async def set_experience(call: CallbackQuery, state: FSMContext):
     )
 
 
-# -------------------- SALARY + SAVE TAGS --------------------
+# ==================== SALARY + SAVE TAGS ====================
 @dp.callback_query(F.data.startswith("sal_"))
 async def set_salary(call: CallbackQuery, state: FSMContext):
     data = await state.get_data()
 
-    # формируем теги пользователя
     tags = [
         data["format"].replace("format_", ""),
         data["experience"].replace("exp_", ""),
@@ -84,7 +87,7 @@ async def set_salary(call: CallbackQuery, state: FSMContext):
     )
 
 
-# -------------------- CHECK SUBSCRIPTION --------------------
+# ==================== CHECK SUBSCRIPTION ====================
 @dp.callback_query(F.data == "check_sub")
 async def check_subscription(call: CallbackQuery):
     try:
@@ -113,23 +116,36 @@ async def check_subscription(call: CallbackQuery):
         )
 
 
-# -------------------- AUTO SEND VACANCY (UTIL) --------------------
-async def send_vacancy(vacancy_text: str, vacancy_tags: list[str]):
-    """
-    vacancy_tags пример:
-    ["офис", "без_опыта", "80_120"]
-    """
+# ==================== CHANNEL POST HANDLER ====================
+@dp.channel_post()
+async def channel_post_handler(message: Message):
+    # проверяем, что это нужный канал
+    if message.chat.id != CHANNEL_NUMERIC_ID:
+        return
 
-    users = match_users(vacancy_tags)
+    text = message.text or message.caption
+    if not text:
+        return
+
+    tags = extract_tags(text)
+
+    # если тегов нет — ничего не рассылаем
+    if not tags:
+        return
+
+    users = match_users(tags)
 
     for user_id in users:
         try:
-            await bot.send_message(user_id, vacancy_text)
+            await bot.send_message(
+                user_id,
+                "🔥 Новая вакансия специально для тебя:\n\n" + text
+            )
         except:
             pass
 
 
-# -------------------- MAIN --------------------
+# ==================== MAIN ====================
 async def main():
     await dp.start_polling(bot)
 
