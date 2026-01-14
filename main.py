@@ -1,62 +1,108 @@
 import asyncio
+import re
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    CallbackQuery
-)
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import CommandStart
 from aiogram.enums import ChatMemberStatus
 
 from config import BOT_TOKEN, CHANNEL_USERNAME, ADMIN_ID
-from db import add_user_tag, get_users_by_tag
+from db import add_user_tag, get_users_by_tag, remove_user_tags
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-# простое состояние
-state = {}
+# ================== СОСТОЯНИЕ ==================
 
-# ---------- КЛАВИАТУРЫ ----------
+state = {
+    "mode": None,        # job | post
+    "text": None,
+    "photo": None,
+    "tags": set(),
+    "user_tags": set()   # временное хранилище выбранных интересов
+}
+
+# ================== АВТО-ТЕГИ ==================
+
+AUTO_TAGS = {
+    "Продажи": ["продав", "продаж"],
+    "БезОпыта": ["без опыта", "обуч"],
+    "Подработка": ["смен", "подработ"],
+    "Удаленка": ["удален", "онлайн"],
+    "Курьер": ["курьер", "достав"],
+    "Офис": ["офис"],
+}
+
+def extract_auto_tags(text: str):
+    text = text.lower()
+    tags = set()
+    for tag, keys in AUTO_TAGS.items():
+        if any(k in text for k in keys):
+            tags.add(tag)
+    return tags
+
+# ================== ФОРМАТИРОВАНИЕ ВАКАНСИИ ==================
+
+def format_job(raw: str):
+    raw_l = raw.lower()
+
+    title = raw.split("\n")[0].strip().title()
+
+    salary = re.search(r"\d{3,6}", raw)
+    salary_text = f"{salary.group()} ₽ за смену" if salary else "по договорённости"
+
+    schedule = re.search(r"\d+/\d+", raw)
+    schedule_text = schedule.group() if schedule else "обсуждается"
+
+    link = re.search(r"https?://\S+", raw)
+    link_text = link.group() if link else "написать в личные сообщения"
+
+    experience = "не требуется (обучение)" if "без опыта" in raw_l else "желателен"
+
+    tags = extract_auto_tags(raw)
+
+    text = (
+        f"🔥 {title.upper()}\n\n"
+        f"👷 Должность:\n— {title}\n\n"
+        f"💰 Доход:\n— {salary_text}\n\n"
+        f"⏱ График:\n— {schedule_text}\n\n"
+        f"🎓 Опыт:\n— {experience}\n\n"
+        f"✍️ Отклик:\n👉 {link_text}\n\n"
+        + " ".join(f"#{t}" for t in tags)
+    )
+
+    return text, tags
+
+# ================== КЛАВИАТУРЫ ==================
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить вакансию", callback_data="add_job")],
+        [InlineKeyboardButton(text="📝 Опубликовать пост", callback_data="add_post")],
         [InlineKeyboardButton(text="📂 Выбрать интересы", callback_data="user_menu")]
+    ])
+
+def confirm_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📢 Опубликовать", callback_data="publish"),
+            InlineKeyboardButton(text="❌ Отменить", callback_data="cancel")
+        ]
     ])
 
 def categories_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚚 Доставка / Курьеры", callback_data="cat_delivery")],
-        [InlineKeyboardButton(text="💻 Удалёнка", callback_data="cat_remote")],
-        [InlineKeyboardButton(text="💼 Офис / Продажи", callback_data="cat_office")],
+        [InlineKeyboardButton(text="🚚 Курьер / Доставка", callback_data="tag_Курьер")],
+        [InlineKeyboardButton(text="💻 Удалёнка", callback_data="tag_Удаленка")],
+        [InlineKeyboardButton(text="💼 Офис / Продажи", callback_data="tag_Продажи")],
+        [InlineKeyboardButton(text="🗑 Очистить интересы", callback_data="clear_interests")],
+        [InlineKeyboardButton(text="✅ Готово", callback_data="save_interests")]
     ])
 
-def delivery_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🚴 Курьер", callback_data="tag_Курьер")],
-        [InlineKeyboardButton(text="📦 Доставка", callback_data="tag_Доставка")],
-        [InlineKeyboardButton(text="🕒 Подработка", callback_data="tag_Подработка")],
-    ])
+# ================== ПРОВЕРКА ПОДПИСКИ ==================
 
-def remote_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🏠 Удаленка", callback_data="tag_Удаленка")],
-        [InlineKeyboardButton(text="📞 CallCenter", callback_data="tag_CallCenter")],
-    ])
-
-def office_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💼 Офис", callback_data="tag_Офис")],
-        [InlineKeyboardButton(text="📈 Продажи", callback_data="tag_Продажи")],
-    ])
-
-# ---------- ПРОВЕРКА ПОДПИСКИ ----------
-
-async def is_subscribed(user_id: int) -> bool:
+async def is_subscribed(user_id: int):
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in (
@@ -67,7 +113,7 @@ async def is_subscribed(user_id: int) -> bool:
     except:
         return False
 
-# ---------- START ----------
+# ================== START ==================
 
 @router.message(CommandStart())
 async def start(message: Message):
@@ -79,116 +125,127 @@ async def start(message: Message):
         return
 
     if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Админ-меню", reply_markup=admin_kb())
+        await message.answer("👑 Админ-панель", reply_markup=admin_kb())
     else:
-        await message.answer("Выбери категорию:", reply_markup=categories_kb())
+        await message.answer("📂 Выбери интересы:", reply_markup=categories_kb())
 
-# ---------- МЕНЮ ПОЛЬЗОВАТЕЛЯ ----------
+# ================== МЕНЮ ИНТЕРЕСОВ ==================
 
 @router.callback_query(F.data == "user_menu")
 async def user_menu(cb: CallbackQuery):
-    await cb.message.answer("Выбери категорию:", reply_markup=categories_kb())
+    await cb.message.answer("📂 Выбери интересы:", reply_markup=categories_kb())
     await cb.answer()
 
-@router.callback_query(F.data == "cat_delivery")
-async def cat_delivery(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=delivery_kb())
-    await cb.answer()
-
-@router.callback_query(F.data == "cat_remote")
-async def cat_remote(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=remote_kb())
-    await cb.answer()
-
-@router.callback_query(F.data == "cat_office")
-async def cat_office(cb: CallbackQuery):
-    await cb.message.answer("Выбери интерес:", reply_markup=office_kb())
-    await cb.answer()
+# ================== ВЫБОР ИНТЕРЕСОВ ==================
 
 @router.callback_query(F.data.startswith("tag_"))
-async def save_tag(cb: CallbackQuery):
+async def toggle_tag(cb: CallbackQuery):
     tag = cb.data.replace("tag_", "")
-    add_user_tag(cb.from_user.id, tag)
-    await cb.message.answer(f"✅ Интерес сохранён: #{tag}")
+    user_tags = state["user_tags"]
+
+    if tag in user_tags:
+        user_tags.remove(tag)
+        await cb.answer(f"❌ #{tag} убран")
+    else:
+        user_tags.add(tag)
+        await cb.answer(f"✅ #{tag} добавлен")
+
+# ================== СОХРАНИТЬ ИНТЕРЕСЫ ==================
+
+@router.callback_query(F.data == "save_interests")
+async def save_interests(cb: CallbackQuery):
+    if not state["user_tags"]:
+        await cb.answer("❗ Ничего не выбрано", show_alert=True)
+        return
+
+    for tag in state["user_tags"]:
+        add_user_tag(cb.from_user.id, tag)
+
+    tags_text = " ".join(f"#{t}" for t in state["user_tags"])
+    state["user_tags"] = set()
+
+    await cb.message.answer(f"✅ Интересы сохранены:\n{tags_text}")
     await cb.answer()
 
-# ---------- ДОБАВЛЕНИЕ ВАКАНСИИ ----------
+# ================== ОЧИСТКА ИНТЕРЕСОВ ==================
+
+@router.callback_query(F.data == "clear_interests")
+async def clear_interests(cb: CallbackQuery):
+    remove_user_tags(cb.from_user.id)
+    state["user_tags"] = set()
+    await cb.message.answer("🗑 Все интересы удалены")
+    await cb.answer()
+
+# ================== ДОБАВЛЕНИЕ КОНТЕНТА ==================
 
 @router.callback_query(F.data == "add_job")
 async def add_job(cb: CallbackQuery):
-    if cb.from_user.id != ADMIN_ID:
-        await cb.answer("⛔ Нет доступа", show_alert=True)
-        return
-
-    state["awaiting_job"] = True
-    await cb.message.answer(
-        "✏️ Отправь вакансию ОДНИМ сообщением\n\n"
-        "Можно:\n"
-        "• текст\n"
-        "• фото + подпись\n\n"
-        "Теги:\n"
-        "#Курьер #Удаленка #БезОпыта"
-    )
+    state["mode"] = "job"
+    await cb.message.answer("✏️ Напиши вакансию простым текстом")
     await cb.answer()
 
-# ---------- ПРИЁМ ВАКАНСИИ ----------
+@router.callback_query(F.data == "add_post")
+async def add_post(cb: CallbackQuery):
+    state["mode"] = "post"
+    await cb.message.answer("📝 Отправь пост (текст или фото + текст)")
+    await cb.answer()
+
+# ================== ПРИЁМ СООБЩЕНИЯ ==================
 
 @router.message(F.from_user.id == ADMIN_ID)
-async def admin_post(message: Message):
-    if not state.get("awaiting_job"):
+async def receive(message: Message):
+    if not state.get("mode"):
         return
 
-    text = message.caption or message.text
+    raw = message.text or message.caption
+    photo = message.photo[-1].file_id if message.photo else None
 
-    # ❗ ЗАЩИТА ОТ ПУСТОГО ТЕКСТА
-    if not text:
-        await message.answer(
-            "❌ Вакансия без текста\n\n"
-            "📌 Добавь подпись к фото или отправь текст."
-        )
-        state["awaiting_job"] = True
+    if not raw:
+        await message.answer("❌ Нужно добавить текст")
         return
 
-    state["awaiting_job"] = False
-    tags = {w[1:] for w in text.split() if w.startswith("#")}
-    sent = 0
+    if state["mode"] == "job":
+        text, tags = format_job(raw)
+    else:
+        text = raw
+        tags = extract_auto_tags(raw)
 
-    # 🖼 Фото + текст
-    if message.photo:
-        photo_id = message.photo[-1].file_id
+    state["text"] = text
+    state["photo"] = photo
+    state["tags"] = tags
 
-        await bot.send_photo(
-            CHANNEL_USERNAME,
-            photo_id,
-            caption=text
-        )
+    if photo:
+        await message.answer_photo(photo, caption=text, reply_markup=confirm_kb())
+    else:
+        await message.answer(text, reply_markup=confirm_kb())
 
-        for tag in tags:
-            for uid in get_users_by_tag(tag):
-                try:
-                    await bot.send_photo(uid, photo_id, caption=text)
-                    sent += 1
-                except:
-                    pass
+# ================== ПУБЛИКАЦИЯ ==================
 
-    # 📝 Только текст
+@router.callback_query(F.data == "publish")
+async def publish(cb: CallbackQuery):
+    text = state["text"]
+    photo = state["photo"]
+
+    if photo:
+        await bot.send_photo(CHANNEL_USERNAME, photo, caption=text)
     else:
         await bot.send_message(CHANNEL_USERNAME, text)
 
-        for tag in tags:
-            for uid in get_users_by_tag(tag):
-                try:
+    for tag in state["tags"]:
+        for uid in get_users_by_tag(tag):
+            try:
+                if photo:
+                    await bot.send_photo(uid, photo, caption=text)
+                else:
                     await bot.send_message(uid, text)
-                    sent += 1
-                except:
-                    pass
+            except:
+                pass
 
-    await message.answer(
-        f"✅ Вакансия опубликована\n"
-        f"📩 Рассылка: {sent} чел"
-    )
+    state["mode"] = None
+    await cb.message.answer("✅ Опубликовано", reply_markup=admin_kb())
+    await cb.answer()
 
-# ---------- ЗАПУСК ----------
+# ================== ЗАПУСК ==================
 
 async def main():
     await dp.start_polling(bot)
