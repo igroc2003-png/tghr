@@ -126,37 +126,43 @@ async def add_job(cb: CallbackQuery):
         "Можно:\n"
         "• текст\n"
         "• фото + подпись\n\n"
-        "Теги пиши так:\n"
+        "Теги:\n"
         "#Курьер #Удаленка #БезОпыта"
     )
     await cb.answer()
 
-# ---------- ПРИЁМ ВАКАНСИИ (ТЕКСТ / ФОТО) ----------
+# ---------- ПРИЁМ ВАКАНСИИ ----------
 
 @router.message(F.from_user.id == ADMIN_ID)
 async def admin_post(message: Message):
     if not state.get("awaiting_job"):
         return
 
+    text = message.caption or message.text
+
+    # ❗ ЗАЩИТА ОТ ПУСТОГО ТЕКСТА
+    if not text:
+        await message.answer(
+            "❌ Вакансия без текста\n\n"
+            "📌 Добавь подпись к фото или отправь текст."
+        )
+        state["awaiting_job"] = True
+        return
+
     state["awaiting_job"] = False
-
-    text = message.caption or message.text or ""
     tags = {w[1:] for w in text.split() if w.startswith("#")}
-
     sent = 0
 
-    # 🖼 Если есть фото
+    # 🖼 Фото + текст
     if message.photo:
         photo_id = message.photo[-1].file_id
 
-        # В канал
         await bot.send_photo(
             CHANNEL_USERNAME,
             photo_id,
             caption=text
         )
 
-        # Рассылка
         for tag in tags:
             for uid in get_users_by_tag(tag):
                 try:
@@ -165,8 +171,8 @@ async def admin_post(message: Message):
                 except:
                     pass
 
+    # 📝 Только текст
     else:
-        # Только текст
         await bot.send_message(CHANNEL_USERNAME, text)
 
         for tag in tags:
