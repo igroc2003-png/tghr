@@ -1,6 +1,11 @@
 import asyncio
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    CallbackQuery
+)
 from aiogram.filters import CommandStart
 from aiogram.enums import ChatMemberStatus
 
@@ -12,7 +17,10 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
+# простое состояние
 state = {}
+
+# ---------- КЛАВИАТУРЫ ----------
 
 def admin_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -46,7 +54,9 @@ def office_kb():
         [InlineKeyboardButton(text="📈 Продажи", callback_data="tag_Продажи")],
     ])
 
-async def is_subscribed(user_id: int):
+# ---------- ПРОВЕРКА ПОДПИСКИ ----------
+
+async def is_subscribed(user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
         return member.status in (
@@ -57,12 +67,14 @@ async def is_subscribed(user_id: int):
     except:
         return False
 
+# ---------- START ----------
+
 @router.message(CommandStart())
 async def start(message: Message):
     if not await is_subscribed(message.from_user.id):
         await message.answer(
             "🔒 Подпишись на канал:\n"
-            f"https://t.me/{CHANNEL_USERNAME[1:]}"
+            f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}"
         )
         return
 
@@ -70,6 +82,8 @@ async def start(message: Message):
         await message.answer("👑 Админ-меню", reply_markup=admin_kb())
     else:
         await message.answer("Выбери категорию:", reply_markup=categories_kb())
+
+# ---------- МЕНЮ ПОЛЬЗОВАТЕЛЯ ----------
 
 @router.callback_query(F.data == "user_menu")
 async def user_menu(cb: CallbackQuery):
@@ -92,23 +106,32 @@ async def cat_office(cb: CallbackQuery):
     await cb.answer()
 
 @router.callback_query(F.data.startswith("tag_"))
-async def save_tag(callback: CallbackQuery):
-    tag = callback.data.replace("tag_", "")
-    add_user_tag(callback.from_user.id, tag)
-    await callback.message.answer(f"✅ Интерес сохранён: #{tag}")
-    await callback.answer()
+async def save_tag(cb: CallbackQuery):
+    tag = cb.data.replace("tag_", "")
+    add_user_tag(cb.from_user.id, tag)
+    await cb.message.answer(f"✅ Интерес сохранён: #{tag}")
+    await cb.answer()
+
+# ---------- ДОБАВЛЕНИЕ ВАКАНСИИ ----------
 
 @router.callback_query(F.data == "add_job")
 async def add_job(cb: CallbackQuery):
     if cb.from_user.id != ADMIN_ID:
         await cb.answer("⛔ Нет доступа", show_alert=True)
         return
-    await cb.message.answer(
-        "✏️ Отправь текст вакансии ОДНИМ сообщением\n\n"
-        "Пример тегов: #Курьер #Удаленка #БезОпыта"
-    )
+
     state["awaiting_job"] = True
+    await cb.message.answer(
+        "✏️ Отправь вакансию ОДНИМ сообщением\n\n"
+        "Можно:\n"
+        "• текст\n"
+        "• фото + подпись\n\n"
+        "Теги пиши так:\n"
+        "#Курьер #Удаленка #БезОпыта"
+    )
     await cb.answer()
+
+# ---------- ПРИЁМ ВАКАНСИИ (ТЕКСТ / ФОТО) ----------
 
 @router.message(F.from_user.id == ADMIN_ID)
 async def admin_post(message: Message):
@@ -116,21 +139,50 @@ async def admin_post(message: Message):
         return
 
     state["awaiting_job"] = False
-    text = message.text or ""
+
+    text = message.caption or message.text or ""
     tags = {w[1:] for w in text.split() if w.startswith("#")}
 
-    await bot.send_message(CHANNEL_USERNAME, text)
-
     sent = 0
-    for tag in tags:
-        for uid in get_users_by_tag(tag):
-            try:
-                await bot.send_message(uid, text)
-                sent += 1
-            except:
-                pass
 
-    await message.answer(f"✅ Вакансия опубликована\n📩 Рассылка: {sent} чел")
+    # 🖼 Если есть фото
+    if message.photo:
+        photo_id = message.photo[-1].file_id
+
+        # В канал
+        await bot.send_photo(
+            CHANNEL_USERNAME,
+            photo_id,
+            caption=text
+        )
+
+        # Рассылка
+        for tag in tags:
+            for uid in get_users_by_tag(tag):
+                try:
+                    await bot.send_photo(uid, photo_id, caption=text)
+                    sent += 1
+                except:
+                    pass
+
+    else:
+        # Только текст
+        await bot.send_message(CHANNEL_USERNAME, text)
+
+        for tag in tags:
+            for uid in get_users_by_tag(tag):
+                try:
+                    await bot.send_message(uid, text)
+                    sent += 1
+                except:
+                    pass
+
+    await message.answer(
+        f"✅ Вакансия опубликована\n"
+        f"📩 Рассылка: {sent} чел"
+    )
+
+# ---------- ЗАПУСК ----------
 
 async def main():
     await dp.start_polling(bot)
