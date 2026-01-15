@@ -1,44 +1,27 @@
 import asyncio
-import re
-from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message,
-    CallbackQuery,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import CommandStart
-from aiogram.enums import ChatMemberStatus
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.exceptions import TelegramBadRequest
 
-from config import BOT_TOKEN, CHANNEL_USERNAME, ADMIN_ID
-from db import (
-    add_user_tag,
-    remove_user_tags,
-    get_user_tags,
-    get_users_by_tag
-)
-
-# ================= BOT =================
+from config import BOT_TOKEN
+from db import add_user_tag, remove_user_tags, get_user_tags
 
 bot = Bot(BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+router = Router()
+dp.include_router(router)
 
-# ================= FSM =================
 
 class Form(StatesGroup):
     choosing_interests = State()
-    adding_job = State()
-    adding_post = State()
 
-# ================= ИНТЕРЕСЫ =================
 
 INTERESTS = {
     "Курьеры": "🚚 Доставка / Курьеры",
-    "Магазин": "🏪 Магазины / Склады",
+    "Магазины": "🏪 Магазины / Склады",
     "Фастфуд": "🍔 Фастфуд",
     "Коллцентр": "📞 Call-центр",
     "Клининг": "🧹 Клининг",
@@ -51,63 +34,11 @@ INTERESTS = {
     "Подработка": "⏱️ Подработка",
 }
 
-AUTO_TAGS = {
-    "Курьеры": ["курьер", "достав"],
-    "Магазин": ["магазин", "склад"],
-    "Фастфуд": ["фастфуд", "бургер"],
-    "Коллцентр": ["call", "колл"],
-    "Клининг": ["клининг", "убор"],
-    "Мастер": ["мастер", "ремонт", "отделк"],
-    "Офис": ["офис", "продаж"],
-    "Финансы": ["банк", "кредит", "финанс"],
-    "Учитель": ["учител", "преподав"],
-    "Водитель": ["водител", "такси"],
-    "Удаленка": ["удален", "онлайн"],
-    "Подработка": ["подработ", "смен"],
-}
-
-# ================= УТИЛИТЫ =================
-
-def extract_auto_tags(text: str) -> set:
-    text = text.lower()
-    tags = set()
-    for tag, keys in AUTO_TAGS.items():
-        if any(k in text for k in keys):
-            tags.add(tag)
-    return tags
-
-
-def format_job(raw: str):
-    title = raw.split("\n")[0].strip().title()
-
-    salary = re.search(r"\d{3,6}", raw)
-    salary_text = salary.group() + " ₽" if salary else "по договорённости"
-
-    schedule = re.search(r"\d+/\d+", raw)
-    schedule_text = schedule.group() if schedule else "обсуждается"
-
-    link = re.search(r"https?://\S+", raw)
-    link_text = link.group() if link else "в личные сообщения"
-
-    tags = extract_auto_tags(raw)
-
-    text = (
-        f"🔥 {title.upper()}\n\n"
-        f"👷 Должность:\n— {title}\n\n"
-        f"💰 Доход:\n— {salary_text}\n\n"
-        f"⏱ График:\n— {schedule_text}\n\n"
-        f"✍️ Отклик:\n👉 {link_text}\n\n"
-    )
-
-    if tags:
-        text += "\n" + " ".join(f"#{t}" for t in tags)
-
-    return text, tags
-
-# ================= КЛАВИАТУРЫ =================
 
 def interests_kb(selected: set):
-    kb, row = [], []
+    kb = []
+    row = []
+
     for tag, title in INTERESTS.items():
         mark = "✅" if tag in selected else "❌"
         row.append(
@@ -119,97 +50,46 @@ def interests_kb(selected: set):
         if len(row) == 2:
             kb.append(row)
             row = []
+
     if row:
         kb.append(row)
 
     kb.append([
-        InlineKeyboardButton("🗑 Очистить", callback_data="clear"),
-        InlineKeyboardButton("✅ Готово", callback_data="done")
+        InlineKeyboardButton(text="🗑 Очистить", callback_data="clear"),
+        InlineKeyboardButton(text="✅ Готово", callback_data="done")
     ])
+
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-
-def admin_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("➕ Добавить вакансию", callback_data="add_job")],
-        [InlineKeyboardButton("📝 Опубликовать пост", callback_data="add_post")],
-        [InlineKeyboardButton("📂 Выбрать интересы", callback_data="choose")]
-    ])
-
-
-def confirm_kb():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton("📢 Опубликовать", callback_data="publish"),
-            InlineKeyboardButton("❌ Отменить", callback_data="cancel")
-        ]
-    ])
-
-# ================= ПОДПИСКА =================
-
-async def is_subscribed(user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in (
-            ChatMemberStatus.MEMBER,
-            ChatMemberStatus.ADMINISTRATOR,
-            ChatMemberStatus.CREATOR
-        )
-    except:
-        return False
-
-# ================= START =================
-
-@dp.message(CommandStart())
+@router.message(CommandStart())
 async def start(message: Message, state: FSMContext):
-    if not await is_subscribed(message.from_user.id):
-        await message.answer(
-            f"🔒 Подпишись на канал:\nhttps://t.me/{CHANNEL_USERNAME.lstrip('@')}"
-        )
-        return
-
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("👑 Админ-панель", reply_markup=admin_kb())
-    else:
-        tags = set(get_user_tags(message.from_user.id))
-        await state.set_state(Form.choosing_interests)
-        await state.update_data(selected=tags)
-        await message.answer(
-            "📂 Выбери интересы:",
-            reply_markup=interests_kb(tags)
-        )
-
-# ================= ИНТЕРЕСЫ =================
-
-@dp.callback_query(F.data == "choose")
-async def choose(cb: CallbackQuery, state: FSMContext):
-    tags = set(get_user_tags(cb.from_user.id))
+    tags = get_user_tags(message.from_user.id)
     await state.set_state(Form.choosing_interests)
     await state.update_data(selected=tags)
-    await cb.message.answer(
+
+    await message.answer(
         "📂 Выбери интересы:",
         reply_markup=interests_kb(tags)
     )
-    await cb.answer()
 
 
-@dp.callback_query(F.data.startswith("tag_"))
+@router.callback_query(F.data.startswith("tag_"))
 async def toggle(cb: CallbackQuery, state: FSMContext):
     tag = cb.data.replace("tag_", "")
     data = await state.get_data()
     selected = set(data.get("selected", set()))
 
-    selected.symmetric_difference_update({tag})
+    if tag in selected:
+        selected.remove(tag)
+    else:
+        selected.add(tag)
 
     await state.update_data(selected=selected)
-    try:
-        await cb.message.edit_reply_markup(reply_markup=interests_kb(selected))
-    except TelegramBadRequest:
-        pass
+    await cb.message.edit_reply_markup(reply_markup=interests_kb(selected))
     await cb.answer()
 
 
-@dp.callback_query(F.data == "clear")
+@router.callback_query(F.data == "clear")
 async def clear(cb: CallbackQuery, state: FSMContext):
     remove_user_tags(cb.from_user.id)
     await state.update_data(selected=set())
@@ -217,110 +97,25 @@ async def clear(cb: CallbackQuery, state: FSMContext):
     await cb.answer("Очищено")
 
 
-@dp.callback_query(F.data == "done")
+@router.callback_query(F.data == "done")
 async def done(cb: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    selected = set(data.get("selected", set()))
+    selected = data.get("selected", set())
 
     remove_user_tags(cb.from_user.id)
     for tag in selected:
         add_user_tag(cb.from_user.id, tag)
 
+    tags_text = " ".join(f"#{t}" for t in selected) if selected else "—"
     await state.clear()
-    await cb.message.answer(
-        "✅ Интересы сохранены",
-        reply_markup=admin_kb() if cb.from_user.id == ADMIN_ID else None
-    )
+
+    await cb.message.answer(f"✅ Интересы сохранены:\n{tags_text}")
     await cb.answer()
 
-# ================= АДМИН =================
-
-@dp.callback_query(F.data == "add_job")
-async def add_job(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(Form.adding_job)
-    await cb.message.answer("✏️ Отправь текст вакансии")
-    await cb.answer()
-
-
-@dp.callback_query(F.data == "add_post")
-async def add_post(cb: CallbackQuery, state: FSMContext):
-    await state.set_state(Form.adding_post)
-    await cb.message.answer("📝 Отправь пост")
-    await cb.answer()
-
-
-@dp.message(Form.adding_job)
-async def receive_job(message: Message, state: FSMContext):
-    raw = message.text or message.caption
-    photo = message.photo[-1].file_id if message.photo else None
-
-    text, tags = format_job(raw)
-
-    await state.update_data(text=text, tags=tags, photo=photo)
-
-    if photo:
-        await message.answer_photo(photo, caption=text, reply_markup=confirm_kb())
-    else:
-        await message.answer(text, reply_markup=confirm_kb())
-
-
-@dp.message(Form.adding_post)
-async def receive_post(message: Message, state: FSMContext):
-    text = message.text or message.caption
-    photo = message.photo[-1].file_id if message.photo else None
-    tags = extract_auto_tags(text)
-
-    await state.update_data(text=text, tags=tags, photo=photo)
-
-    if photo:
-        await message.answer_photo(photo, caption=text, reply_markup=confirm_kb())
-    else:
-        await message.answer(text, reply_markup=confirm_kb())
-
-# ================= ПУБЛИКАЦИЯ =================
-
-@dp.callback_query(F.data == "publish")
-async def publish(cb: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    text = data["text"]
-    photo = data.get("photo")
-    tags = data.get("tags", set())
-
-    if photo:
-        await bot.send_photo(CHANNEL_USERNAME, photo, caption=text)
-    else:
-        await bot.send_message(CHANNEL_USERNAME, text)
-
-    sent = 0
-    for tag in tags:
-        for uid in get_users_by_tag(tag):
-            try:
-                if photo:
-                    await bot.send_photo(uid, photo, caption=text)
-                else:
-                    await bot.send_message(uid, text)
-                sent += 1
-            except:
-                pass
-
-    await state.clear()
-    await cb.message.answer(
-        f"✅ Опубликовано\n📩 Рассылка: {sent}",
-        reply_markup=admin_kb()
-    )
-    await cb.answer()
-
-
-@dp.callback_query(F.data == "cancel")
-async def cancel(cb: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await cb.message.answer("❌ Отменено", reply_markup=admin_kb())
-    await cb.answer()
-
-# ================= ЗАПУСК =================
 
 async def main():
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
