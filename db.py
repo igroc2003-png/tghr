@@ -1,24 +1,46 @@
 import sqlite3
 
-DB = "bot.db"
+conn = sqlite3.connect("users.db")
+cursor = conn.cursor()
 
-def init_db():
-    with sqlite3.connect(DB) as c:
-        c.execute("CREATE TABLE IF NOT EXISTS interests (user_id INTEGER, tag TEXT)")
-        c.execute("CREATE TABLE IF NOT EXISTS stats (user_id INTEGER, delivered INTEGER DEFAULT 0)")
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS user_tags (
+    user_id INTEGER,
+    tag TEXT
+)
+""")
+conn.commit()
 
-def get_users_by_interests(tags):
-    if not tags:
-        return []
-    q = "SELECT DISTINCT user_id FROM interests WHERE tag IN ({})".format(",".join("?"*len(tags)))
-    with sqlite3.connect(DB) as c:
-        return [r[0] for r in c.execute(q, tags)]
+def add_user_tag(user_id: int, tag: str):
+    cursor.execute(
+        "INSERT INTO user_tags (user_id, tag) VALUES (?, ?)",
+        (user_id, tag)
+    )
+    conn.commit()
+
+def remove_user_tags(user_id: int):
+    cursor.execute(
+        "DELETE FROM user_tags WHERE user_id = ?",
+        (user_id,)
+    )
+    conn.commit()
+
+def get_user_tags(user_id: int):
+    cursor.execute(
+        "SELECT tag FROM user_tags WHERE user_id = ?",
+        (user_id,)
+    )
+    return [row[0] for row in cursor.fetchall()]
+
+def get_users_by_tag(tag: str):
+    cursor.execute(
+        "SELECT DISTINCT user_id FROM user_tags WHERE tag = ?",
+        (tag,)
+    )
+    return [row[0] for row in cursor.fetchall()]
 
 def get_all_users():
-    with sqlite3.connect(DB) as c:
-        return [r[0] for r in c.execute("SELECT DISTINCT user_id FROM interests")]
-
-def save_stat_delivery(uid):
-    with sqlite3.connect(DB) as c:
-        c.execute("INSERT OR IGNORE INTO stats (user_id) VALUES (?)", (uid,))
-        c.execute("UPDATE stats SET delivered = delivered + 1 WHERE user_id=?", (uid,))
+    cursor.execute(
+        "SELECT DISTINCT user_id FROM user_tags"
+    )
+    return {row[0] for row in cursor.fetchall()}
